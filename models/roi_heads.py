@@ -344,7 +344,7 @@ class RoIHeads(nn.Module):
                     keypoint_features = self.keypoint_head(graformer_features)
                     graformer_keypoint_logits = self.keypoint_predictor(keypoint_features)
                 else:
-                    graformer_keypoint_logits = keypoint_logits
+                    graformer_keypoint_logits = f
 
                 if self.graph_input == 'heatmaps':
                     batch, kps, H, W = graformer_keypoint_logits.shape                   
