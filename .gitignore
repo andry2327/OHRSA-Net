@@ -47,3 +47,4 @@ checkpoints
 THOR-Net/checkpoints
 checkpoints/THOR-Net_trained_on_HO3D
 datasets/TEST_DATASET/
+test.py

@@ -27,6 +27,10 @@ from utils.utils import freeze_component, calculate_keypoints, create_loader, pr
 from models.thor_net import create_thor
 torch.multiprocessing.set_sharing_strategy('file_system')
 
+import sys
+sys.path.append('/content/OHRSA-Net/ultralytics')
+from ultralytics.models import YOLO
+
 '------------------ OTHER INPUT PARAMETERS ------------------'
 IS_SAMPLE_DATASET = False # to use a sample of original dataset
 TRAINING_SUBSET_SIZE = 100
