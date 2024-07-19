@@ -57,7 +57,7 @@ args.output_file = '/content/drive/MyDrive/Thesis/OHRSA-Net/checkpoints/Training
 output_folder = args.output_file.rpartition(os.sep)[0]
 if not os.path.exists(output_folder):
     os.mkdir(output_folder) 
-args.batch_size = 1
+args.batch_size = 2
 args.num_iteration = 20
 args.object = False 
 args.hid_size = 96
@@ -239,7 +239,7 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
         
         results = model(inputs)
         
-        # Compute_losses
+        # Compute_losses TODO
         losses = compute_loss(results['keypoint3d'], data_dict['keypoints3d'], results['mesh3d'], data_dict['mesh3d'],
                               inputs, data_dict['palm'], 
                               photometric=args.photometric, num_classes=num_classes, dataset_name=args.dataset_name)

@@ -64,15 +64,19 @@ class OHRSA(nn.Module):
     def forward(self, images, targets=None):
         
         # get 2d keypoints and feature maps
-        out = self.keypoint_predictor(images)
-        keypoints2d = torch.cat([o.keypoints.xy for o in out])
-        feature_maps = torch.cat([o.feature_maps for o in out])
+        out = self.keypoint_predictor.predict(images, imgsz=images.shape[-2:], max_det=1)
+        
+        zero_keypoints = torch.zeros((1, self.num_kps2d, 2), device=self.device)
+        keypoints2d_list = [
+            o.keypoints.xy if o.keypoints.xy.numel() != 0 else zero_keypoints
+            for o in out
+        ]
+        keypoints2d = torch.cat(keypoints2d_list)
+        
+        feature_maps = out[0].feature_maps
         
         batch, kps, dimension = keypoints2d.shape
-        graformer_inputs = keypoints2d.view(batch, (self.num_classes-1) * kps, dimension)[:, :self.num_kps3d, :2] 
-        # insert zeros in case null tensor, as for heatmaps
-        if graformer_inputs.numel() == 0: 
-            graformer_inputs = torch.zeros((batch, (self.num_classes-1) * self.num_kps2d, dimension), device=self.device)[:, :self.num_kps3d, :2]
+        graformer_inputs = keypoints2d.view(batch, (self.num_classes-1) * kps, dimension)[:, :self.num_kps3d, :2]
             
         # Estimate 3D pose
         
@@ -83,7 +87,7 @@ class OHRSA(nn.Module):
         #     file.write(f'{datetime.datetime.now()} | END keypoints3d prediction\n')
         
         # Extract features from feature_maps
-        graformer_features = feature_maps
+        graformer_features = torch.clone(feature_maps)
         graformer_features = self.feature_extractor(graformer_features)
         graformer_features = graformer_features.unsqueeze(axis=1).repeat(1, self.num_kps2d, 1)
         
