@@ -136,16 +136,16 @@ def heatmaps_to_keypoints(maps, rois):
 
     return xy_preds.permute(0, 2, 1), end_scores
 
-def keypointrcnn_loss(keypoint_logits, proposals, gt_keypoints, keypoint_matched_idxs, 
+def compute_loss(#keypoint_logits, proposals, gt_keypoints, keypoint_matched_idxs, 
                     keypoint3d_pred=None, keypoint3d_gt=None, mesh3d_pred=None, 
                     mesh3d_gt=None, original_images=None, palms_gt=None,
-                    photometric=False, num_classes=4, dataset_name='h2o'):
+                    photometric=False, num_classes=2, dataset_name='povsurgery'):
 
-    N, K, H, W = keypoint_logits.shape
-    assert H == W
-    discretization_size = H
-    heatmaps = []
-    valid = []
+    # N, K, H, W = keypoint_logits.shape
+    # assert H == W
+    # discretization_size = H
+    # heatmaps = []
+    # valid = []
     kps3d = []
     meshes3d = []
     images = []
@@ -153,50 +153,52 @@ def keypointrcnn_loss(keypoint_logits, proposals, gt_keypoints, keypoint_matched
     if palms_gt is None:
         palms_gt = [None] * len(proposals)
 
-    zipped_data = zip(proposals, gt_keypoints, keypoint3d_gt, mesh3d_gt, original_images, keypoint_matched_idxs, palms_gt)
+    # zipped_data = zip(proposals, gt_keypoints, keypoint3d_gt, mesh3d_gt, original_images, keypoint_matched_idxs, palms_gt)
     # zipped_data = zip(proposals, gt_keypoints, keypoint_matched_idxs, original_images)
-    for proposals_per_image, gt_kp_in_image, gt_kp3d_in_image, gt_mesh3d_in_image, image, midx, palm_in_image in zipped_data:
+    zipped_data = zip(keypoint3d_gt, mesh3d_gt, original_images, palms_gt)
+    for gt_kp3d_in_image, gt_mesh3d_in_image, image, palm_in_image in zipped_data:
         
-        kp = gt_kp_in_image[midx]
+        # kp = gt_kp_in_image[midx]
         
         if palm_in_image is not None:
-            palm = palm_in_image[midx]
+            # palm = palm_in_image[midx]
             palms.append(palm.view(-1))
 
-        num_regions = midx.shape[0]
+        # num_regions = midx.shape[0]
 
-        heatmaps_per_image, valid_per_image = keypoints_to_heatmap(kp, proposals_per_image, discretization_size)
+        # heatmaps_per_image, valid_per_image = keypoints_to_heatmap(kp, proposals_per_image, discretization_size)
         
-        heatmaps.append(heatmaps_per_image.view(-1))
-        valid.append(valid_per_image.view(-1))
+        # heatmaps.append(heatmaps_per_image.view(-1))
+        # valid.append(valid_per_image.view(-1))
 
         if num_classes == 2:
-            kp3d = gt_kp3d_in_image[midx]
-            mesh3d = gt_mesh3d_in_image[midx]
+            # kp3d = gt_kp3d_in_image[midx]
+            # mesh3d = gt_mesh3d_in_image[midx]
 
             kps3d.append(kp3d.view(-1))
             meshes3d.append(mesh3d.view(-1))
-            images.extend([image] * num_regions)
+            # images.extend([image] * num_regions)
 
         else:
             images.append(image)
         
 
         
-    keypoint_targets = torch.cat(heatmaps, dim=0)
-    valid = torch.cat(valid, dim=0).to(dtype=torch.uint8)    
-    valid = torch.where(valid)[0]
+    # keypoint_targets = torch.cat(heatmaps, dim=0)
+    # valid = torch.cat(valid, dim=0).to(dtype=torch.uint8)    
+    # valid = torch.where(valid)[0]
     
     # torch.mean (in binary_cross_entropy_with_logits) does'nt
     # accept empty tensors, so handle it sepaartely
     
-    if keypoint_targets.numel() == 0 or len(valid) == 0:
-        return keypoint_logits.sum() * 0
+    # if keypoint_targets.numel() == 0 or len(valid) == 0:
+        # return keypoint_logits.sum() * 0
 
-    keypoint_logits = keypoint_logits.view(N * K, H * W)
+    # keypoint_logits = keypoint_logits.view(N * K, H * W)
     
     # Heatmap Loss
-    keypoint_loss = F.cross_entropy(keypoint_logits[valid], keypoint_targets[valid])
+    # keypoint_loss = F.cross_entropy(keypoint_logits[valid], keypoint_targets[valid])
+    keypoint_loss = -1 # no kps2d loss for OHRSA-Net
     
     # 3D pose Loss
     if num_classes > 2:
@@ -242,7 +244,14 @@ def keypointrcnn_loss(keypoint_logits, proposals, gt_keypoints, keypoint_matched
     # mesh3d_loss += mesh3d_loss_smooth
     
     # Print the losses
-    return keypoint_loss, keypoint3d_loss, mesh3d_loss, photometric_loss
+    
+    losses = {
+        'loss_keypoint': keypoint_loss,
+        'loss_keypoint3d': keypoint3d_loss,
+        'loss_mesh3d': mesh3d_loss,
+        'photometric_loss': photometric_loss
+    }
+    return losses
 
 def keypointrcnn_inference(x, boxes):
     # type: (Tensor, List[Tensor]) -> Tuple[List[Tensor], List[Tensor]]

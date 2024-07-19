@@ -25,6 +25,7 @@ from utils.utils import freeze_component, calculate_keypoints, create_loader, pr
 # from utils.h2o_utils.h2o_preprocessing_utils import MyPreprocessor
 
 from models.ohrsa_net import OHRSA
+from models.rcnn_loss import compute_loss
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 import sys
@@ -238,7 +239,10 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
         
         results = model(inputs)
         
-        # Calculate Loss
+        # Compute_losses
+        losses = compute_loss(results['keypoint3d'], data_dict['keypoints3d'], results['mesh3d'], data_dict['mesh3d'],
+                              inputs, data_dict['palm'], 
+                              photometric=args.photometric, num_classes=num_classes, dataset_name=args.dataset_name)
         loss = sum(loss_dict.values())
         
         # Backpropagate

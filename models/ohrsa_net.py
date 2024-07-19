@@ -30,11 +30,13 @@ class OHRSA(nn.Module):
         super(OHRSA, self).__init__()
 
         self.device = device
-        self.num_classes = num_classes - 1
+        self.num_classes = num_classes
         self.multiframe = multiframe
+        self.num_kps2d = num_kps2d
+        self.num_kps3d = num_kps3d
         
         # Keypoints 2D extractor
-        self.keypoints2d_extractor = YOLO(keypoints2d_extractor_path) 
+        self.keypoint_predictor = YOLO(keypoints2d_extractor_path) 
 
         # GraFormer
         if graph_input == 'heatmaps':          
@@ -62,12 +64,15 @@ class OHRSA(nn.Module):
     def forward(self, images, targets=None):
         
         # get 2d keypoints and feature maps
-        out = self.keypoints2d_extractor(images)
-        keypoints2d = out['keypoints']
-        feature_maps = out['feature_maps']
+        out = self.keypoint_predictor(images)
+        keypoints2d = torch.cat([o.keypoints.xy for o in out])
+        feature_maps = torch.cat([o.feature_maps for o in out])
         
         batch, kps, dimension = keypoints2d.shape
-        graformer_inputs = keypoints2d.view(batch, self.num_classes * kps, dimension)[:, :self.num_kps3d, :2]                
+        graformer_inputs = keypoints2d.view(batch, (self.num_classes-1) * kps, dimension)[:, :self.num_kps3d, :2] 
+        # insert zeros in case null tensor, as for heatmaps
+        if graformer_inputs.numel() == 0: 
+            graformer_inputs = torch.zeros((batch, (self.num_classes-1) * self.num_kps2d, dimension), device=self.device)[:, :self.num_kps3d, :2]
             
         # Estimate 3D pose
         
