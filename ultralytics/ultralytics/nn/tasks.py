@@ -146,7 +146,7 @@ class BaseModel(nn.Module):
                 embeddings.append(nn.functional.adaptive_avg_pool2d(x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
                 if m.i == max(embed):
                     return torch.unbind(torch.cat(embeddings, 1), dim=0)
-            if m.i==21 and isinstance(x, torch.Tensor):  # custom step to return feature maps of inputs 
+            if m.i==19 and isinstance(x, torch.Tensor):  # custom step to return feature maps of inputs 
                 feature_maps = x
         return x, feature_maps
 

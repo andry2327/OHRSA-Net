@@ -223,10 +223,6 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
     running_loss3d = 0.0
     running_mesh_loss3d = 0.0
     running_photometric_loss = 0.0
-    
-    if 'h2o' in args.dataset_name.lower():
-        h2o_info = (train_input_tar_lists, train_annotation_tar_files, annotation_components, args.buffer_size, my_preprocessor)
-        trainloader = create_loader(args.dataset_name, h2o_data_dir, 'train', args.batch_size, h2o_info=h2o_info)
 
     pbar = tqdm(desc=f'Epoch {epoch+1} - train: ', total=len(trainloader))
     for i, tr_data in enumerate(trainloader):
@@ -238,11 +234,9 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
         
         # Forward
         targets = [{k: v.to(device) for k, v in t.items() if k in keys} for t in data_dict]
-        inputs = {
-            'inputs': [t['inputs'].to(device) for t in data_dict],
-            'prev_frames': [t['prev_frames'] for t in data_dict if 'prev_frames' in t]
-        }
-        loss_dict, result = model(inputs, targets)
+        inputs = torch.stack([t['inputs']for t in data_dict]).to(device)
+        
+        results = model(inputs)
         
         # Calculate Loss
         loss = sum(loss_dict.values())

@@ -5,12 +5,19 @@ import numpy as np
 import os
 import torch.utils.data as data
 import cv2
+import torch.nn.functional as F
 import os.path
 import io
 import torch 
 from PIL import Image
 from .rcnn_utils import calculate_bounding_box, create_rcnn_data
 
+def add_padding(image, stride=32):
+    c, h, w = image.shape
+    pad_h = (stride - h % stride) % stride
+    pad_w = (stride - w % stride) % stride
+    padding = (0, pad_w, 0, pad_h)  # (left, right, top, bottom)
+    return F.pad(image, padding, mode='constant', value=0)
 
 class Dataset(data.Dataset):
     """# Dataset Class """
@@ -64,8 +71,10 @@ class Dataset(data.Dataset):
                 # print(f'DEBUG: {image_path}')
                 original_image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
                 
-
+        original_image = original_image / 255
         inputs = self.transform(original_image)  # [:3]
+        inputs = inputs.to(torch.float)
+        inputs = add_padding(inputs)
 
         if self.load_set != 'test':
             # Loading 2D Mesh for bounding box calculation

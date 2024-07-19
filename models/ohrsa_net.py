@@ -10,7 +10,9 @@ from GraFormer.network.MeshGraFormer import MeshGraFormer
 
 from GraFormer.common.data_utils import create_edges
 
-from ultralytics import YOLO
+import sys
+sys.path.append('/content/OHRSA-Net/ultralytics')
+from ultralytics.models import YOLO
 
 __all__ = [
     "KeypointRCNN", "keypointrcnn_resnet50_fpn"
@@ -25,6 +27,7 @@ class OHRSA(nn.Module):
                  # additional
                  hands_connectivity_type='',
                  multiframe=False):
+        super(OHRSA, self).__init__()
 
         self.device = device
         self.num_classes = num_classes - 1
@@ -47,20 +50,21 @@ class OHRSA(nn.Module):
         # Coarse-to-fine GraFormer
         mesh_graformer = None
         if num_verts > 0:
-            feature_extractor = TwoMLPHead(256 * 14 * 14, num_features)
+            self.feature_extractor = TwoMLPHead(256 * 34 * 60, num_features)
             input_size += num_features
             output_size = 3
             if photometric:
                 output_size += 3
             self.mesh_graformer = MeshGraFormer(initial_adj=adj.to(device), hid_dim=num_features // 4, coords_dim=(input_size, output_size), 
                             num_kps3d=num_kps3d, num_verts=num_verts, dropout=0.25, 
-                            adj_matrix_root='/content/THOR-Net/GraFormer/adj_matrix')
+                            adj_matrix_root='/content/OHRSA-Net/GraFormer/adj_matrix')
 
     def forward(self, images, targets=None):
         
         # get 2d keypoints and feature maps
-        out, feature_maps = self.keypoints2d_extractor(images)
+        out = self.keypoints2d_extractor(images)
         keypoints2d = out['keypoints']
+        feature_maps = out['feature_maps']
         
         batch, kps, dimension = keypoints2d.shape
         graformer_inputs = keypoints2d.view(batch, self.num_classes * kps, dimension)[:, :self.num_kps3d, :2]                
@@ -74,6 +78,7 @@ class OHRSA(nn.Module):
         #     file.write(f'{datetime.datetime.now()} | END keypoints3d prediction\n')
         
         # Extract features from feature_maps
+        graformer_features = feature_maps
         graformer_features = self.feature_extractor(graformer_features)
         graformer_features = graformer_features.unsqueeze(axis=1).repeat(1, self.num_kps2d, 1)
         
