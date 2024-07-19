@@ -33,7 +33,7 @@ from ultralytics.models import YOLO
 
 '------------------ OTHER INPUT PARAMETERS ------------------'
 IS_SAMPLE_DATASET = False # to use a sample of original dataset
-TRAINING_SUBSET_SIZE = 150
+TRAINING_SUBSET_SIZE = 100
 VALIDATION_SUBSET_SIZE = 10
 '------------------------------------------------------------'
 '------------------ INPUT PARAMETERS for MULTI-FRAME features ------------------'
