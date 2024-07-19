@@ -24,7 +24,7 @@ from utils.utils import freeze_component, calculate_keypoints, create_loader, pr
 # from utils.h2o_utils.h2o_dataset_utils import load_tar_split 
 # from utils.h2o_utils.h2o_preprocessing_utils import MyPreprocessor
 
-from models.thor_net import create_thor
+from models.ohrsa_net import OHRSA
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 import sys
@@ -49,9 +49,10 @@ output_folder = args.output_file.rpartition(os.sep)[0]
 # print('-'*30)
 
 # DEBUG
-args.dataset_name = 'TEST_DATASET' # ho3d, povsurgery, TEST_DATASET
+args.dataset_name = 'povsurgery' # ho3d, povsurgery, TEST_DATASET
 args.root = '/content/drive/MyDrive/Thesis/THOR-Net_based_work/povsurgery/object_False' 
-args.output_file = '/content/drive/MyDrive/Thesis/THOR-Net_based_work/checkpoints/THOR-Net_trained_on_POV-Surgery_object_False/Training-KE--01-07-2024_10-27/model-' 
+args.keypoints2d_extractor_path = '/content/drive/MyDrive/Thesis/Keypoints2d_extraction/YOLO_Pose/Training-DEBUG--16-07-2024_09-46/weights/best.pt'
+args.output_file = '/content/drive/MyDrive/Thesis/OHRSA-Net/checkpoints/Training-TEST--19-07-2024_10-05/model-' 
 output_folder = args.output_file.rpartition(os.sep)[0]
 if not os.path.exists(output_folder):
     os.mkdir(output_folder) 
@@ -161,22 +162,21 @@ else: # i.e. HO3D, POV-Surgery
     valloader = create_loader(args.dataset_name, args.root, 'val', batch_size=args.batch_size, other_params=other_params)
     print(f'✅ Validation data loaded.')
     num_classes = 2 
-    graph_input = 'heatmaps'
+    graph_input = 'coords'
 
 """ load model """
 torch.cuda.empty_cache()
 
-model = create_thor(num_kps2d=num_kps2d, num_kps3d=num_kps3d, num_verts=num_verts, num_classes=num_classes, 
-                                rpn_post_nms_top_n_train=num_classes-1, 
-                                device=device, num_features=args.num_features, hid_size=args.hid_size,
-                                photometric=args.photometric, graph_input=graph_input, dataset_name=args.dataset_name, testing=args.testing,
-                                hands_connectivity_type=args.hands_connectivity_type,
-                                multiframe=args.multiframe)
+model = OHRSA(keypoints2d_extractor_path=args.keypoints2d_extractor_path,
+              num_classes=num_classes, num_kps2d=21, num_kps3d=21, num_verts=778,
+              photometric=args.photometric, hid_size=args.hid_size, graph_input=graph_input,
+              num_features=args.num_features, device=device, dataset_name='povsurgery',
+              hands_connectivity_type=args.hands_connectivity_type, multiframe=args.multiframe)
 
 # pytorch_total_params = sum(p.numel() for p in model.parameters()) # DEBUG
 # print(f'# params THOR-Net: {pytorch_total_params}') # DEBUG
 
-print('THOR-Net is loaded')
+print('OHRSA-Net is loaded')
 
 if torch.cuda.is_available():
     model = model.cuda(args.gpu_number[0])
