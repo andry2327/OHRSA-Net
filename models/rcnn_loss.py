@@ -141,7 +141,7 @@ def compute_loss(#keypoint_logits, proposals, gt_keypoints, keypoint_matched_idx
                     mesh3d_gt=None, original_images=None, palms_gt=None,
                     photometric=False, num_classes=2, dataset_name='povsurgery'):
 
-    # N, K, H, W = keypoint_logits.shape
+    N, K, D = keypoint3d_pred.shape
     # assert H == W
     # discretization_size = H
     # heatmaps = []
@@ -151,7 +151,7 @@ def compute_loss(#keypoint_logits, proposals, gt_keypoints, keypoint_matched_idx
     images = []
     palms = []
     if palms_gt is None:
-        palms_gt = [None] * len(proposals)
+        palms_gt = [None] * len(keypoint3d_pred.shape[0])
 
     # zipped_data = zip(proposals, gt_keypoints, keypoint3d_gt, mesh3d_gt, original_images, keypoint_matched_idxs, palms_gt)
     # zipped_data = zip(proposals, gt_keypoints, keypoint_matched_idxs, original_images)
@@ -162,7 +162,7 @@ def compute_loss(#keypoint_logits, proposals, gt_keypoints, keypoint_matched_idx
         
         if palm_in_image is not None:
             # palm = palm_in_image[midx]
-            palms.append(palm.view(-1))
+            palms.append(palm_in_image.view(-1))
 
         # num_regions = midx.shape[0]
 
@@ -175,9 +175,10 @@ def compute_loss(#keypoint_logits, proposals, gt_keypoints, keypoint_matched_idx
             # kp3d = gt_kp3d_in_image[midx]
             # mesh3d = gt_mesh3d_in_image[midx]
 
-            kps3d.append(kp3d.view(-1))
-            meshes3d.append(mesh3d.view(-1))
-            # images.extend([image] * num_regions)
+            kps3d.append(gt_kp3d_in_image.view(-1))
+            meshes3d.append(gt_mesh3d_in_image.view(-1))
+            # images.extend([image] * num_regions) # TODO if multiple predicitons for single frame
+            images.extend([image])
 
         else:
             images.append(image)
@@ -242,14 +243,12 @@ def compute_loss(#keypoint_logits, proposals, gt_keypoints, keypoint_matched_idx
     # if N > 1:
     #     mesh3d_loss_smooth += calculate_smoothing_loss(mesh3d_pred[K:K*2], K)
     # mesh3d_loss += mesh3d_loss_smooth
-    
-    # Print the losses
-    
+
     losses = {
         'loss_keypoint': keypoint_loss,
         'loss_keypoint3d': keypoint3d_loss,
         'loss_mesh3d': mesh3d_loss,
-        'photometric_loss': photometric_loss
+        'loss_photometric': photometric_loss
     }
     return losses
 

@@ -64,7 +64,7 @@ class OHRSA(nn.Module):
     def forward(self, images, targets=None):
         
         # get 2d keypoints and feature maps
-        out = self.keypoint_predictor.predict(images, imgsz=images.shape[-2:], max_det=1)
+        out = self.keypoint_predictor.predict(images, imgsz=images.shape[-2:], max_det=1, verbose=False)
         
         zero_keypoints = torch.zeros((1, self.num_kps2d, 2), device=self.device)
         keypoints2d_list = [
@@ -98,7 +98,7 @@ class OHRSA(nn.Module):
         mesh3d = self.mesh_graformer(mesh_graformer_inputs)
         # with open(log_time_file_path, 'a') as file:
         #     file.write(f'{datetime.datetime.now()} | END mesh3d prediction\n')
-            
+        
         results = {
             'keypoint3d': keypoint3d,
             'mesh3d': mesh3d
