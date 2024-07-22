@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from utils.dataset import Dataset
 from utils.vis_utils import *
 from tqdm import tqdm
-from models.thor_net import create_thor
+from models.ohrsa_net import OHRSA
 from utils.utils import *
 # for H2O dataset only
 # from utils.h2o_utils.h2o_dataset_utils import load_tar_split
@@ -47,21 +47,24 @@ args = parse_args_function()
 
 # DEBUG
 args.testing = True
-args.dataset_name = 'ho3d' # TEST_DATASET, povsurgery, ho3d
-args.root = '/content/drive/MyDrive/Thesis/THOR-Net_based_work/ho3d'#'/content/drive/MyDrive/Thesis/THOR-Net_based_work/povsurgery/object_False' 
-args.checkpoint_model = '/content/drive/MyDrive/Thesis/THOR-Net_based_work/checkpoints/THOR-Net_trained_on_HO3D/model-18.pkl'
+args.dataset_name = 'povsurgery' # TEST_DATASET, povsurgery, ho3d
+args.keypoints2d_extractor_path = '/content/drive/MyDrive/Thesis/Keypoints2d_extraction/YOLO_Pose/Training-DEBUG--16-07-2024_09-46/weights/best.pt'
+args.root = '/content/drive/MyDrive/Thesis/THOR-Net_based_work/povsurgery/object_False' 
+args.checkpoint_model = '/content/drive/MyDrive/Thesis/OHRSA-Net/checkpoints/Training-TEST-OHRSA--22-07-2024_12-21/model-13.pkl'#'/content/drive/MyDrive/Thesis/THOR-Net_based_work/checkpoints/THOR-Net_trained_on_HO3D/model-18.pkl'
 args.mano_root = '/content/drive/MyDrive/Thesis/mano_v1_2/models'
 args.obj_root = '/content/THOR-Net/datasets/objects/mesh_1000/book.obj'
 args.split = 'test'
 args.seq = ''#'d_diskplacer_1/00145'
-args.output_results = '/content/drive/MyDrive/Thesis/THOR-Net_based_work/output_results'
+args.output_results = '/content/drive/MyDrive/Thesis/OHRSA-Net/output_results'
 args.gpu_number = 0
 args.batch_size = 1
 args.hid_size = 96
 args.photometric = True
+args.multiframe = False
 args.hands_connectivity_type = 'base'
 args.visualize = False
-args.object = True
+args.object = False
+args.use_autocast = False
 
 is_evaluate = False
     
@@ -79,7 +82,7 @@ for arg, value in vars(args).items():
     print(f"{arg}: {value}", end=' | ')
 print('\n')
 
-left_hand_faces, right_hand_faces, obj_faces = load_faces(mano_root=args.mano_root, obj_root=args.obj_root)
+# left_hand_faces, right_hand_faces, obj_faces = load_faces(mano_root=args.mano_root, obj_root=args.obj_root)
 
 def visualize2d(img, predictions, labels=None, filename=None, palm=None, evaluate=False):
     
@@ -184,7 +187,7 @@ elif args.dataset_name == 'TEST_DATASET': # DEBUG
     testset = Subset(testset, indices)
     testloader = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=2, collate_fn=ho3d_collate_fn)
     num_classes = 2
-    graph_input='heatmaps'
+    graph_input='coords'
     print(f'✅ TEST_DATASET data loaded.')
 else:
     print(f'Loading evaluation data ...', end=' ')
@@ -196,7 +199,7 @@ else:
         testset = Subset(testset, indices)
     testloader = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=True, num_workers=2, collate_fn=ho3d_collate_fn)
     num_classes = 2
-    graph_input='heatmaps'
+    graph_input='coords'
     print(f'✅ Evaluation data loaded.')
     
 use_cuda = False
@@ -212,13 +215,11 @@ except:
 
 # Define model
 torch.cuda.empty_cache()
-model = create_thor(pretrained=False, num_classes=num_classes, device=device,
-                                num_kps2d=num_kps2d, num_kps3d=num_kps3d, num_verts=num_verts,
-                                rpn_post_nms_top_n_test=num_classes-1, 
-                                box_score_thresh=0.0,
-                                photometric=args.photometric, graph_input=graph_input, dataset_name=args.dataset_name,
-                                num_features=args.num_features, hid_size=args.hid_size, testing=args.testing,
-                                hands_connectivity_type=args.hands_connectivity_type)
+model = OHRSA(keypoints2d_extractor_path=args.keypoints2d_extractor_path,
+              num_classes=num_classes, num_kps2d=21, num_kps3d=21, num_verts=778,
+              photometric=args.photometric, hid_size=args.hid_size, graph_input=graph_input,
+              num_features=args.num_features, device=device, dataset_name='povsurgery',
+              hands_connectivity_type=args.hands_connectivity_type, multiframe=args.multiframe)
 
 if torch.cuda.is_available():
     model = model.cuda(device=args.gpu_number)
@@ -230,16 +231,36 @@ pretrained_model = args.checkpoint_model
 
 # adjust key names, they are in wrong format
 state_dict = torch.load(pretrained_model, map_location=device)
-try:
-    model.load_state_dict(state_dict)
-except:
-    for key in list(state_dict.keys()):
-        state_dict[key.replace('module.', '')] = state_dict.pop(key)
-    model.load_state_dict(state_dict)
 
-model = model.eval()
+# Save the initial state of the model parameters
+# initial_state_dict = {k: v.clone() for k, v in model.state_dict().items()}
+
+# try:
+model.load_state_dict(state_dict, strict=False)
+# except:
+#     for key in list(state_dict.keys()):
+#         state_dict[key.replace('module.', '')] = state_dict.pop(key)
+#     model.load_state_dict(state_dict)
+
+# model = model.eval()
 # print(model)
 print(f'🟢 Model "{pretrained_model.split(os.sep)[-2]}{os.sep}{pretrained_model.split(os.sep)[-1]}" loaded')
+
+n_params = sum(p.numel() for p in model.parameters())
+print(f'OHRSA-Net params: {n_params:,}')
+
+# Load the state dictionary into the model
+model.load_state_dict(state_dict, strict=False)
+
+# # Compare the parameters before and after loading
+# for name, param in model.named_parameters():
+#     if name in initial_state_dict:
+#         if not torch.equal(param.data, initial_state_dict[name]):
+#             print(f"🟢 Parameter '{name}' was updated.")
+#         else:
+#             print(f"🔴 Parameter '{name}' was not updated.")
+#     else:
+#         print(f"Parameter '{name}' is not present in the initial state dict.")
 
 keys = ['boxes', 'labels', 'keypoints', 'keypoints3d', 'mesh3d']
 if args.dataset_name == 'ho3d':
@@ -279,7 +300,7 @@ for i, ts_data in tqdm(enumerate(testloader), total=len(testloader), desc='Evalu
     # # DEBUG time
     # with open(log_time_file_path, 'a') as file:
     #     file.write(f'{datetime.datetime.now()} | START Inputs {i+1}\n')
-    _, result = model(inputs)
+    _, result = model(inputs) # TODO inference
     # with open(log_time_file_path, 'a') as file:
     #     file.write(f'{datetime.datetime.now()} | END Inputs {i+1}\n')
     outputs = (result, _)

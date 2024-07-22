@@ -36,8 +36,8 @@ scaler = GradScaler()
 
 '------------------ OTHER INPUT PARAMETERS ------------------'
 IS_SAMPLE_DATASET = True # to use a sample of original dataset
-TRAINING_SUBSET_SIZE = 50
-VALIDATION_SUBSET_SIZE = 10
+TRAINING_SUBSET_SIZE = 10
+VALIDATION_SUBSET_SIZE = 2
 '------------------------------------------------------------'
 '------------------ INPUT PARAMETERS for MULTI-FRAME features ------------------'
 N_PREVIOUS_FRAMES = 1
@@ -55,11 +55,11 @@ output_folder = args.output_file.rpartition(os.sep)[0]
 args.dataset_name = 'povsurgery' # ho3d, povsurgery, TEST_DATASET
 args.root = '/content/drive/MyDrive/Thesis/THOR-Net_based_work/povsurgery/object_False' 
 args.keypoints2d_extractor_path = '/content/drive/MyDrive/Thesis/Keypoints2d_extraction/YOLO_Pose/Training-DEBUG--16-07-2024_09-46/weights/best.pt'
-args.output_file = '/content/drive/MyDrive/Thesis/OHRSA-Net/checkpoints/Training-TEST-OHRSA--22-07-2024_11-36/model-' 
+args.output_file = '/content/drive/MyDrive/Thesis/OHRSA-Net/checkpoints/Training-TEST-OHRSA--22-07-2024_12-21/model-' 
 output_folder = args.output_file.rpartition(os.sep)[0]
 if not os.path.exists(output_folder):
     os.mkdir(output_folder) 
-args.batch_size = 2
+args.batch_size = 1
 args.num_iteration = 20
 args.object = False 
 args.hid_size = 96
