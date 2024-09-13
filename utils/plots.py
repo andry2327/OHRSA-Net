@@ -115,7 +115,7 @@ def parse_logs(log_file):
 def plot_losses(log_file, out_path=''):
     epochs_train, val_epochs, losses_2d, losses_3d, mesh_losses_3d, photometric_losses, val_losses_2d, val_losses_3d, val_mesh_losses_3d, val_photometric_losses = parse_logs(log_file)
     
-    fig, axs = plt.subplots(3, 2, figsize=(30, 24))
+    fig, axs = plt.subplots(4, 2, figsize=(30, 40))
 
     # Define fontsize
     fontsize = FONTSIZE
@@ -130,26 +130,35 @@ def plot_losses(log_file, out_path=''):
     axs[0, 0].tick_params(axis='x', rotation=45, labelsize=fontsize)
     axs[0, 0].tick_params(axis='y', labelsize=fontsize)
 
-    # Plot training loss 3D and mesh loss 3D
+    # Plot training loss 3D
     axs[1, 0].plot(epochs_train, losses_3d, label='Loss 3D', marker='o')
-    axs[1, 0].plot(epochs_train, mesh_losses_3d, label='Mesh Loss 3D', marker='o')
     axs[1, 0].set_xlabel('Epochs', fontsize=fontsize)
     axs[1, 0].set_ylabel('Loss', fontsize=fontsize)
-    axs[1, 0].set_title('Training Loss 3D and Mesh Loss 3D', fontsize=fontsize)
+    axs[1, 0].set_title('Training Loss 3D', fontsize=fontsize)
     axs[1, 0].legend(fontsize=fontsize)
     axs[1, 0].grid(True)
     axs[1, 0].tick_params(axis='x', rotation=45, labelsize=fontsize)
     axs[1, 0].tick_params(axis='y', labelsize=fontsize)
 
-    # Plot training photometric loss
-    axs[2, 0].plot(epochs_train, photometric_losses, label='Photometric Loss', marker='o')
+    # Plot training mesh loss 3D
+    axs[2, 0].plot(epochs_train, mesh_losses_3d, label='Mesh Loss 3D', marker='o')
     axs[2, 0].set_xlabel('Epochs', fontsize=fontsize)
     axs[2, 0].set_ylabel('Loss', fontsize=fontsize)
-    axs[2, 0].set_title('Training Photometric Loss', fontsize=fontsize)
+    axs[2, 0].set_title('Training Mesh Loss 3D', fontsize=fontsize)
     axs[2, 0].legend(fontsize=fontsize)
     axs[2, 0].grid(True)
     axs[2, 0].tick_params(axis='x', rotation=45, labelsize=fontsize)
     axs[2, 0].tick_params(axis='y', labelsize=fontsize)
+
+    # Plot training photometric loss
+    axs[3, 0].plot(epochs_train, photometric_losses, label='Photometric Loss', marker='o')
+    axs[3, 0].set_xlabel('Epochs', fontsize=fontsize)
+    axs[3, 0].set_ylabel('Loss', fontsize=fontsize)
+    axs[3, 0].set_title('Training Photometric Loss', fontsize=fontsize)
+    axs[3, 0].legend(fontsize=fontsize)
+    axs[3, 0].grid(True)
+    axs[3, 0].tick_params(axis='x', rotation=45, labelsize=fontsize)
+    axs[3, 0].tick_params(axis='y', labelsize=fontsize)
 
     # Plot validation loss 2D
     axs[0, 1].plot(val_epochs, val_losses_2d, label='Validation Loss 2D', marker='x')
@@ -161,37 +170,46 @@ def plot_losses(log_file, out_path=''):
     axs[0, 1].tick_params(axis='x', rotation=45, labelsize=fontsize)
     axs[0, 1].tick_params(axis='y', labelsize=fontsize)
 
-    # Plot validation loss 3D and mesh loss 3D
+    # Plot validation loss 3D
     axs[1, 1].plot(val_epochs, val_losses_3d, label='Validation Loss 3D', marker='x')
-    axs[1, 1].plot(val_epochs, val_mesh_losses_3d, label='Validation Mesh Loss 3D', marker='x')
     axs[1, 1].set_xlabel('Epochs', fontsize=fontsize)
     axs[1, 1].set_ylabel('Loss', fontsize=fontsize)
-    axs[1, 1].set_title('Validation Loss 3D and Mesh Loss 3D', fontsize=fontsize)
+    axs[1, 1].set_title('Validation Loss 3D', fontsize=fontsize)
     axs[1, 1].legend(fontsize=fontsize)
     axs[1, 1].grid(True)
     axs[1, 1].tick_params(axis='x', rotation=45, labelsize=fontsize)
     axs[1, 1].tick_params(axis='y', labelsize=fontsize)
 
-    # Plot validation photometric loss
-    axs[2, 1].plot(val_epochs, val_photometric_losses, label='Validation Photometric Loss', marker='x')
+    # Plot validation mesh loss 3D
+    axs[2, 1].plot(val_epochs, val_mesh_losses_3d, label='Validation Mesh Loss 3D', marker='x')
     axs[2, 1].set_xlabel('Epochs', fontsize=fontsize)
     axs[2, 1].set_ylabel('Loss', fontsize=fontsize)
-    axs[2, 1].set_title('Validation Photometric Loss', fontsize=fontsize)
+    axs[2, 1].set_title('Validation Mesh Loss 3D', fontsize=fontsize)
     axs[2, 1].legend(fontsize=fontsize)
     axs[2, 1].grid(True)
     axs[2, 1].tick_params(axis='x', rotation=45, labelsize=fontsize)
     axs[2, 1].tick_params(axis='y', labelsize=fontsize)
 
-    plt.subplots_adjust(hspace=20, wspace=10, top=0.9, bottom=0.1)
+    # Plot validation photometric loss
+    axs[3, 1].plot(val_epochs, val_photometric_losses, label='Validation Photometric Loss', marker='x')
+    axs[3, 1].set_xlabel('Epochs', fontsize=fontsize)
+    axs[3, 1].set_ylabel('Loss', fontsize=fontsize)
+    axs[3, 1].set_title('Validation Photometric Loss', fontsize=fontsize)
+    axs[3, 1].legend(fontsize=fontsize)
+    axs[3, 1].grid(True)
+    axs[3, 1].tick_params(axis='x', rotation=45, labelsize=fontsize)
+    axs[3, 1].tick_params(axis='y', labelsize=fontsize)
+
+    plt.subplots_adjust(hspace=0.5, wspace=0.3, top=0.95, bottom=0.05)
     
-    file_name = f'Loss_plots--{os.path.basename(log_file).strip(".txt")}.png'
+    file_name = 'loss_plots.png'
     if not os.path.exists(out_path):
         os.makedirs(out_path)
     path_out = os.path.join(out_path, file_name)
     print(f'Plots saved in "{path_out}"')
     plt.tight_layout()
     plt.savefig(path_out, dpi=300)
-    plt.show()
+    #plt.show()
 
 def main():
     parser = argparse.ArgumentParser(description='Plot training and validation losses from log file.')

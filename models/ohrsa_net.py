@@ -11,19 +11,20 @@ from GraFormer.network.MeshGraFormer import MeshGraFormer
 from GraFormer.common.data_utils import create_edges
 
 import sys
-sys.path.append('/content/OHRSA-Net/ultralytics')
+sys.path.append('/home/aidara/Desktop/Thesis_Andrea/OHRSA-Net_Experiments/OHRSA-Net/ultralytics')
 from ultralytics.models import YOLO
 
 __all__ = [
     "KeypointRCNN", "keypointrcnn_resnet50_fpn"
 ]
 
+ADJ_MATRIX_ROOT = '/home/aidara/Desktop/Thesis_Andrea/OHRSA-Net_Experiments/OHRSA-Net/GraFormer/adj_matrix'
 
 class OHRSA(nn.Module):
 
     def __init__(self, keypoints2d_extractor_path, num_classes=None,
                  num_kps2d=21, num_kps3d=50, num_verts=2556, photometric=False, hid_size=128,
-                 graph_input='coords', num_features=2048, device='cuda', dataset_name='h2o',
+                 graph_input='coords', num_features=2048, device='cpu', dataset_name='h2o',
                  # additional
                  hands_connectivity_type='',
                  multiframe=False):
@@ -36,8 +37,8 @@ class OHRSA(nn.Module):
         self.num_kps3d = num_kps3d
         
         # Keypoints 2D extractor
-        self.keypoint_predictor = YOLO(keypoints2d_extractor_path) 
-
+        self.keypoint_predictor = YOLO(keypoints2d_extractor_path).to(self.device) 
+        
         # GraFormer
         if graph_input == 'heatmaps':          
             input_size = 3136
@@ -46,32 +47,35 @@ class OHRSA(nn.Module):
         
         edges = create_edges(num_nodes=num_kps3d, connectivity_type=hands_connectivity_type)
         adj = adj_mx_from_edges(num_pts=num_kps3d, edges=edges, sparse=False)            
-        self.keypoint_graformer = GraFormer(adj=adj.to(device), hid_dim=hid_size, coords_dim=(input_size, 3), 
+        self.keypoint_graformer = GraFormer(adj=adj.to(self.device), hid_dim=hid_size, coords_dim=(input_size, 3), 
                                         n_pts=num_kps3d, num_layers=5, n_head=4, dropout=0.25)
         
         # Coarse-to-fine GraFormer
         mesh_graformer = None
         if num_verts > 0:
-            self.feature_extractor = TwoMLPHead(256 * 34 * 60, num_features)
+            self.feature_extractor = TwoMLPHead(256 * 17 * 17, num_features)
             input_size += num_features
             output_size = 3
             if photometric:
                 output_size += 3
-            self.mesh_graformer = MeshGraFormer(initial_adj=adj.to(device), hid_dim=num_features // 4, coords_dim=(input_size, output_size), 
+            self.mesh_graformer = MeshGraFormer(initial_adj=adj.to(self.device), hid_dim=num_features // 4, coords_dim=(input_size, output_size), 
                             num_kps3d=num_kps3d, num_verts=num_verts, dropout=0.25, 
-                            adj_matrix_root='/content/OHRSA-Net/GraFormer/adj_matrix')
+                            adj_matrix_root=ADJ_MATRIX_ROOT)
 
     def forward(self, images, targets=None):
         
         # get 2d keypoints and feature maps
-        out = self.keypoint_predictor.predict(images, imgsz=images.shape[-2:], max_det=1, verbose=False)
-        
+        with torch.no_grad():
+            out = self.keypoint_predictor.predict(images, imgsz=images.shape[-2:], max_det=1, verbose=False)
+
         zero_keypoints = torch.zeros((1, self.num_kps2d, 2), device=self.device)
         keypoints2d_list = [
             o.keypoints.xy if o.keypoints.xy.numel() != 0 else zero_keypoints
             for o in out
         ]
-        keypoints2d = torch.cat(keypoints2d_list)
+        keypoints2d = torch.cat(keypoints2d_list) # here keypoints2d have shape (B, 21, 2), range for (x, y) values: x -> [0, 1920], y -> [0, 1088]
+        keypoints2d[:, :, 0] = keypoints2d[:, :, 0] / images.shape[-1] # normalize x in [0, 1] range
+        keypoints2d[:, :, 1] = keypoints2d[:, :, 1] / images.shape[-2] # normalize y in [0, 1] range
         
         feature_maps = out[0].feature_maps
         

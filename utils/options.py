@@ -40,6 +40,12 @@ def parse_args_function():
         default='',
         help="Type of hand joints connectivity between simple, extended, full"
     )
+    
+    parser.add_argument(
+        "--multiframe",
+        action='store_true',
+        help="Enable multiframe training"
+    )
 
     parser.add_argument(
         "--obj_root",
@@ -142,6 +148,18 @@ def parse_args_function():
         type=int,
         default=2048,
         help="Number of features passed to coarse-to-fine network"
+    )
+    
+    parser.add_argument(
+        "--use_autocast",
+        action='store_true',
+        help="Enable mixed precision training"
+    )
+    
+    parser.add_argument(
+        "--keypoints2d_extractor_path",
+        default='best.pt',
+        help="Keypoints 2D extractor model path"
     )
 
     parser.add_argument(

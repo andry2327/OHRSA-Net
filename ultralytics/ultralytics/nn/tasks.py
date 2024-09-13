@@ -146,8 +146,12 @@ class BaseModel(nn.Module):
                 embeddings.append(nn.functional.adaptive_avg_pool2d(x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
                 if m.i == max(embed):
                     return torch.unbind(torch.cat(embeddings, 1), dim=0)
-            if m.i==19 and isinstance(x, torch.Tensor):  # custom step to return feature maps of inputs 
+            if m.i==19 and isinstance(x, torch.Tensor):  # CUSTOM step to return feature maps of inputs 
                 feature_maps = x
+                slice_dim = 17 
+                # extarct a tensor from shape (1, 256, 34, 60) to (1, 256, 17, 17)
+                feature_maps = feature_maps[:, :, ::2, ::3]
+                feature_maps = feature_maps[:, :, :slice_dim, :slice_dim]
         return x, feature_maps
 
     def _predict_augment(self, x):

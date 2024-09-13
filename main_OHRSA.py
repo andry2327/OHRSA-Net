@@ -27,8 +27,6 @@ from utils.utils import freeze_component, calculate_keypoints, create_loader, pr
 from models.ohrsa_net import OHRSA
 from models.rcnn_loss import compute_loss
 torch.multiprocessing.set_sharing_strategy('file_system')
-from torch.cuda.amp import GradScaler, autocast
-scaler = GradScaler()
 
 # import sys
 # sys.path.append('/content/OHRSA-Net/ultralytics')
@@ -36,42 +34,47 @@ scaler = GradScaler()
 
 '------------------ OTHER INPUT PARAMETERS ------------------'
 IS_SAMPLE_DATASET = True # to use a sample of original dataset
-TRAINING_SUBSET_SIZE = 10
-VALIDATION_SUBSET_SIZE = 2
+TRAINING_SUBSET_SIZE = 0.01
+VALIDATION_SUBSET_SIZE = 0.01
+USE_CUDA = True
+
 '------------------------------------------------------------'
 '------------------ INPUT PARAMETERS for MULTI-FRAME features ------------------'
 N_PREVIOUS_FRAMES = 1
 STRIDE_PREVIOUS_FRAMES = 3
+
 '-------------------------------------------------------------------------------'
 
 args = parse_args_function()
 output_folder = args.output_file.rpartition(os.sep)[0]
-# print(f'args:')
-# for arg, value in vars(args).items():
-#     print(f"{arg}: {value}", end=' | ')
-# print('-'*30)
+if not os.path.exists(output_folder):
+    os.makedirs(output_folder)
 
+'''
+if not USE_CUDA:
+    os.environ["CUDA_VISIBLE_DEVICES"] = "" # DEBUG
 # DEBUG
 args.dataset_name = 'povsurgery' # ho3d, povsurgery, TEST_DATASET
-args.root = '/content/drive/MyDrive/Thesis/THOR-Net_based_work/povsurgery/object_False' 
-args.keypoints2d_extractor_path = '/content/drive/MyDrive/Thesis/Keypoints2d_extraction/YOLO_Pose/Training-DEBUG--16-07-2024_09-46/weights/best.pt'
-args.output_file = '/content/drive/MyDrive/Thesis/OHRSA-Net/checkpoints/Training-TEST-OHRSA--22-07-2024_12-21/model-' 
+args.root = '/home/aidara/Desktop/Thesis_Andrea/data/annotations_POV-Surgey_object_False_NEW_NEW' 
+args.keypoints2d_extractor_path = '/home/aidara/Desktop/Thesis_Andrea/OHRSA-Net_Experiments/best.pt'
+args.output_file = '/home/aidara/Desktop/Thesis_Andrea/OHRSA-Net_Experiments/output_folder/Training-TEST/model-' 
 output_folder = args.output_file.rpartition(os.sep)[0]
 if not os.path.exists(output_folder):
-    os.mkdir(output_folder) 
+    os.makedirs(output_folder) 
 args.batch_size = 1
 args.num_iteration = 20
 args.object = False 
 args.hid_size = 96
 args.photometric = True
-args.multiframe = False 
+args.multiframe = False # IMPORTANT: Keep False, it does not support multi-frame now
 args.log_batch = 1 # frequency to print training losses
 args.val_epoch = 1 # frequency to compute validation loss
 args.pretrained_model=''#'/content/drive/MyDrive/Thesis/THOR-Net_trained_on_POV-Surgery_object_False/Training-100samples--20-06-2024_17-08/model-22.pkl'
 args.hands_connectivity_type = 'base'
-args.use_autocast = True
+args.use_autocast = False
 # args.visualize = True
 # args.output_results = '/content/drive/MyDrive/Thesis/THOR-Net_trained_on_POV-Surgery_object_False/Training-100samples--20-06-2024_17-08/output_results'
+'''
 
 other_params = {
     'IS_SAMPLE_DATASET': IS_SAMPLE_DATASET,
@@ -83,11 +86,13 @@ other_params = {
 }
 
 # Define device
-device = torch.device(f'cuda:{args.gpu_number[0]}' if torch.cuda.is_available() else 'cpu')
+device = torch.device(f'cuda:{args.gpu_number[0]}' if torch.cuda.is_available() and USE_CUDA else 'cpu')
 
 use_cuda = False
 if torch.cuda.is_available():
     use_cuda = True
+    
+scaler = torch.amp.GradScaler('cuda')
 
 num_kps2d, num_kps3d, num_verts = calculate_keypoints(args.dataset_name, args.object)
 
@@ -118,7 +123,7 @@ else:
     # Create a new log file
     filename_log = os.path.join(
         output_folder,
-        f'log_{output_folder.rpartition(os.sep)[-1]}.txt'
+        'log_training.txt'
     )
 
 # Configure the logging
@@ -135,6 +140,9 @@ logger = logging.getLogger(__name__)
 logger.addHandler(fh)
 logger.setLevel(logging.INFO)
 
+current_timestamp = datetime.datetime.now(pytz.timezone("Europe/Rome")).strftime("%d %B %Y at %H:%M")
+logging.info(f'Training started on {current_timestamp}\n') if not log_file else None
+print(f'\nTraining started on {current_timestamp}\n')
 logging.info(f'args:') if not log_file else None
 print(f'args:')
 for arg, value in vars(args).items():
@@ -158,7 +166,7 @@ if args.dataset_name.lower() == 'h2o':
 else: # i.e. HO3D, POV-Surgery
     print(f'Loading training data ...', end=' ')
     # trainloader = [] # DEBUG
-    trainloader = create_loader(args.dataset_name, args.root, 'train', batch_size=args.batch_size, num_kps3d=num_kps3d, num_verts=num_verts, other_params=other_params) # DEBUG
+    trainloader = create_loader(args.dataset_name, args.root, 'train', batch_size=args.batch_size, num_kps3d=num_kps3d, num_verts=num_verts, other_params=other_params)
     print(f'✅ Training data loaded.')
     print(f'Loading validation data ...', end=' ')
     # DEBUG
@@ -178,11 +186,11 @@ model = OHRSA(keypoints2d_extractor_path=args.keypoints2d_extractor_path,
               hands_connectivity_type=args.hands_connectivity_type, multiframe=args.multiframe)
 
 # pytorch_total_params = sum(p.numel() for p in model.parameters()) # DEBUG
-# print(f'# params THOR-Net: {pytorch_total_params}') # DEBUG
+# print(f'# params OHRSA-Net: {pytorch_total_params}') # DEBUG
 
 print('OHRSA-Net is loaded')
 
-if torch.cuda.is_available():
+if torch.cuda.is_available() and USE_CUDA:
     model = model.cuda(args.gpu_number[0])
     model = nn.DataParallel(model, device_ids=args.gpu_number)
 
@@ -208,7 +216,8 @@ else:
 
 criterion = nn.MSELoss()
 # criterion = nn.L1Loss()
-optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+params_to_update = [param for name, param in model.named_parameters() if "keypoint_predictor" not in name] # filter out YOLO related parameters
+optimizer = optim.Adam(params_to_update, lr=args.learning_rate)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_step_gamma)
 scheduler.last_epoch = start
 
@@ -237,10 +246,10 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
         optimizer.zero_grad()
         
         if args.use_autocast:
-            with autocast():
+            with torch.amp.autocast():
                 targets = [{k: v.to(device) for k, v in t.items() if k in keys} for t in data_dict]
                 inputs = torch.stack([t['inputs'] for t in data_dict]).to(device)
-                results = model(inputs)
+                results = model(inputs).to(device)
 
                 keypoint3d_gt = [dd['keypoints3d'] for dd in data_dict]
                 mesh3d_gt = [dd['mesh3d'] for dd in data_dict]
@@ -250,7 +259,7 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
                 loss_dict = compute_loss(results['keypoint3d'], keypoint3d_gt, results['mesh3d'], mesh3d_gt,
                                         original_images, palms_gt, photometric=args.photometric,
                                         num_classes=num_classes, dataset_name=args.dataset_name)
-                loss = sum(loss_dict.values())
+                loss = sum(loss_dict.get(k, 0) for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric'])
 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
@@ -263,16 +272,16 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
             results = model(inputs)
             
             # Compute losses 
-            keypoint3d_gt = [dd['keypoints3d'] for dd in data_dict]
-            mesh3d_gt = [dd['mesh3d'] for dd in data_dict]
-            original_images = [x.permute(1, 2, 0) for x in inputs]
-            palms_gt = [dd['palm'] for dd in data_dict]
+            keypoint3d_gt = [dd['keypoints3d'].to(device) for dd in data_dict]
+            mesh3d_gt = [dd['mesh3d'].to(device) for dd in data_dict]
+            original_images = [x.permute(1, 2, 0).to(device) for x in inputs]
+            palms_gt = [dd['palm'].to(device) for dd in data_dict]
             
             loss_dict = compute_loss(results['keypoint3d'], keypoint3d_gt, results['mesh3d'], mesh3d_gt,
                                 original_images, palms_gt, 
                                 photometric=args.photometric, num_classes=num_classes, dataset_name=args.dataset_name)
             
-            loss = sum(loss_dict.values())
+            loss = sum(loss_dict.get(k, 0) for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric'])
             
             # Backpropagate
             loss.backward()
@@ -287,7 +296,7 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
             running_photometric_loss += loss_dict['loss_photometric'].data
 
         if (i+1) % args.log_batch == 0:    # print every args.log_iter mini-batches
-            logging.info('[Epoch %d/%d, Processed data %d/%d] loss 2d: %.4f, loss 3d: %.4f, mesh loss 3d: %.4f, photometric loss: %.4f' % 
+            logging.info('[Epoch %d/%d, Processed data %d/%d] loss 2d: %.8f, loss 3d: %.8f, mesh loss 3d: %.8f, photometric loss: %.8f' % 
             (epoch + 1, start+args.num_iterations, i + 1, len(trainloader), running_loss2d / args.log_batch, running_loss3d / args.log_batch, 
             running_mesh_loss3d / args.log_batch, running_photometric_loss / args.log_batch))
             running_mesh_loss3d = 0.0
@@ -302,20 +311,6 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
     pbar.close()
     
     losses.append((loss.data / (i+1)).cpu().numpy())
-    
-    if (epoch+1) % args.snapshot_epoch == 0 and loss.data < min_total_loss: # save model only if total loss is lower than minimum reached
-        torch.save(model.state_dict(), args.output_file+str(epoch+1)+'.pkl')
-        np.save(args.output_file+str(epoch+1)+'-losses.npy', np.array(losses))
-        print(f'Model checkpoint (epoch {epoch+1}) saved in "{output_folder}"')
-        # delete files from older epochs
-        if epoch+1 > 1:
-            files_to_delete = [x for x in os.listdir(output_folder) if f'model-' in x and f'model-{epoch+1}' not in x]
-            for file in files_to_delete:
-                try:
-                    os.remove(os.path.join(output_folder, file))
-                except:
-                    pass
-        min_total_loss = loss.data
         
     # ''' ------------------------ VALIDATION ------------------------ '''
     
@@ -339,16 +334,16 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
         
             # Forward pass
             if args.use_autocast:
-                with autocast():
+                with torch.amp.autocast():
                     targets = [{k: v.to(device) for k, v in t.items() if k in keys} for t in data_dict]
                     inputs = torch.stack([t['inputs']for t in data_dict]).to(device)
                     results = model(inputs)
                     
                     # Compute losses 
-                    keypoint3d_gt = [dd['keypoints3d'] for dd in data_dict]
-                    mesh3d_gt = [dd['mesh3d'] for dd in data_dict]
-                    original_images = [x.permute(1, 2, 0) for x in inputs]
-                    palms_gt = [dd['palm'] for dd in data_dict]
+                    keypoint3d_gt = [dd['keypoints3d'].to(device) for dd in data_dict]
+                    mesh3d_gt = [dd['mesh3d'].to(device) for dd in data_dict]
+                    original_images = [x.permute(1, 2, 0).to(device) for x in inputs]
+                    palms_gt = [dd['palm'].to(device) for dd in data_dict]
                     
                     loss_dict = compute_loss(results['keypoint3d'], keypoint3d_gt, results['mesh3d'], mesh3d_gt,
                                         original_images, palms_gt, 
@@ -364,10 +359,10 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
                 results = model(inputs)
                 
                 # Compute losses 
-                keypoint3d_gt = [dd['keypoints3d'] for dd in data_dict]
-                mesh3d_gt = [dd['mesh3d'] for dd in data_dict]
-                original_images = [x.permute(1, 2, 0) for x in inputs]
-                palms_gt = [dd['palm'] for dd in data_dict]
+                keypoint3d_gt = [dd['keypoints3d'].to(device) for dd in data_dict]
+                mesh3d_gt = [dd['mesh3d'].to(device) for dd in data_dict]
+                original_images = [x.permute(1, 2, 0).to(device) for x in inputs]
+                palms_gt = [dd['palm'].to(device) for dd in data_dict]
                 
                 loss_dict = compute_loss(results['keypoint3d'], keypoint3d_gt, results['mesh3d'], mesh3d_gt,
                                     original_images, palms_gt, 
@@ -418,11 +413,26 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
         
         # model.module.transform.training = True
         
-        logging.info('Epoch %d/%d - val loss 2d: %.4f, val loss 3d: %.4f, val mesh loss 3d: %.4f, val photometric loss: %.4f' % 
+        logging.info('Epoch %d/%d - val loss 2d: %.8f, val loss 3d: %.8f, val mesh loss 3d: %.8f, val photometric loss: %.8f' % 
                     (epoch + 1, start+args.num_iterations, val_loss2d / (v+1), val_loss3d / (v+1), val_mesh_loss3d / (v+1), running_photometric_loss / (v+1)))  
-        print('Epoch %d/%d - val loss 2d: %.4f, val loss 3d: %.4f, val mesh loss 3d: %.4f, val photometric loss: %.4f' % 
+        print('Epoch %d/%d - val loss 2d: %.8f, val loss 3d: %.8f, val mesh loss 3d: %.8f, val photometric loss: %.8f' % 
                     (epoch + 1, start+args.num_iterations, val_loss2d / (v+1), val_loss3d / (v+1), val_mesh_loss3d / (v+1), running_photometric_loss / (v+1)))  
-    
+
+        tot_val_losses =  (val_loss3d / (v+1)) + (val_mesh_loss3d / (v+1)) + (val_photometric_loss / (v+1))
+        if (epoch+1) % args.snapshot_epoch == 0 and tot_val_losses < min_total_loss: # save model only if total val loss is lower than minimum reached
+            torch.save(model.state_dict(), args.output_file+str(epoch+1)+'.pkl')
+            np.save(args.output_file+str(epoch+1)+'-losses.npy', np.array(losses))
+            print(f'Model checkpoint (epoch {epoch+1}) saved in "{output_folder}"')
+            # delete files from older epochs
+            if epoch+1 > 1:
+                files_to_delete = [x for x in os.listdir(output_folder) if f'model-' in x and f'model-{epoch+1}' not in x]
+                for file in files_to_delete:
+                    try:
+                        os.remove(os.path.join(output_folder, file))
+                    except:
+                        pass
+            min_total_loss = tot_val_losses
+        
     if args.freeze and epoch == 0:
         logging.info('Freezing Keypoint RCNN ..')            
         freeze_component(model.module.backbone)
