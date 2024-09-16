@@ -36,10 +36,10 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 # from ultralytics.models import YOLO
 
 '------------------ OTHER INPUT PARAMETERS ------------------'
-IS_SAMPLE_DATASET = False # to use a sample of original dataset
-TRAINING_SUBSET_SIZE = 0.001
-VALIDATION_SUBSET_SIZE = 0.001
-USE_CUDA = True
+IS_SAMPLE_DATASET = True # to use a sample of original dataset
+TRAINING_SUBSET_SIZE = 0.0001
+VALIDATION_SUBSET_SIZE = 0.0001
+USE_CUDA = False
 SAVE_TRAINING_RESULTS = True # Save 3d pose and mesh prediction during training and validation
 
 # Parameters for visualization during training
@@ -63,7 +63,7 @@ output_folder = args.output_file.rpartition(os.sep)[0]
 if not os.path.exists(output_folder):
     os.makedirs(output_folder)
 
-'''
+# '''
 if not USE_CUDA:
     os.environ["CUDA_VISIBLE_DEVICES"] = "" # DEBUG
 # DEBUG
@@ -74,20 +74,20 @@ args.output_file = '/home/aidara/Desktop/Thesis_Andrea/OHRSA-Net_Experiments/out
 output_folder = args.output_file.rpartition(os.sep)[0]
 if not os.path.exists(output_folder):
     os.makedirs(output_folder) 
-args.batch_size = 2
+args.batch_size = 1
 args.num_iteration = 20
 args.object = False 
 args.hid_size = 96
-args.photometric = True
+args.photometric = False
 args.multiframe = False # IMPORTANT: Keep False, it does not support multi-frame now
 args.log_batch = 1 # frequency to print training losses
 args.val_epoch = 1 # frequency to compute validation loss
-args.pretrained_model=''#'/content/drive/MyDrive/Thesis/THOR-Net_trained_on_POV-Surgery_object_False/Training-100samples--20-06-2024_17-08/model-22.pkl'
+args.pretrained_model='/home/aidara/Desktop/Thesis_Andrea/data/checkpoints/THOR-Net_trained_on_HO3D/right_hand/model-11.pkl'
 args.hands_connectivity_type = 'base'
 args.use_autocast = False
 # args.visualize = True
 # args.output_results = '/content/drive/MyDrive/Thesis/THOR-Net_trained_on_POV-Surgery_object_False/Training-100samples--20-06-2024_17-08/output_results'
-'''
+# '''
 
 # Define device
 device = torch.device(f'cuda:{args.gpu_number[0]}' if torch.cuda.is_available() and USE_CUDA else 'cpu')
@@ -230,18 +230,56 @@ if torch.cuda.is_available() and USE_CUDA:
 
 """ load saved model"""
 
+def check_layers_to_load(layer_name) -> bool:
+    VALID = ['keypoint_graformer', 'mesh_graformer']
+    NOT_VALID = [
+        'keypoint_graformer.gconv_input.weight', 
+        'keypoint_graformer.gconv_input.bias', 
+        'mesh_graformer.gconv_input.weight', 
+        'mesh_graformer.gconv_input.bias'
+    ]
+
+    # Check if the layer contains any valid substring
+    if any(v in layer_name for v in VALID):
+        # Exclude the ones that are not valid
+        if any(nv in layer_name for nv in NOT_VALID):
+            return False
+        return True
+    return False
+    
+
 if args.pretrained_model != '':
     print(f'🟢 Loading checkpoint "{args.pretrained_model.split(os.sep)[-2]}{os.sep}{args.pretrained_model.split(os.sep)[-1]}" ...')
     state_dict = torch.load(args.pretrained_model, map_location=device)
-    try:
-        model.load_state_dict(state_dict)
-    except:
-        for key in list(state_dict.keys()):
-            state_dict[key.replace('module.', '')] = state_dict.pop(key)
-        model.load_state_dict(state_dict)
-    losses = np.load(args.pretrained_model[:-4] + '-losses.npy').tolist()
-    start = len(losses)
-    print(f'🟢 Model checkpoint "{args.pretrained_model.split(os.sep)[-2]}{os.sep}{args.pretrained_model.split(os.sep)[-1]}" loaded')
+    
+    is_thornet_pretrained = False
+    if any('roi_heads' in key for key in state_dict.keys()):
+        is_thornet_pretrained = True
+    
+    if not is_thornet_pretrained:
+        try:
+            model.load_state_dict(state_dict)
+        except:
+            for key in list(state_dict.keys()):
+                state_dict[key.replace('module.', '')] = state_dict.pop(key)
+            model.load_state_dict(state_dict)
+        losses = np.load(args.pretrained_model[:-4] + '-losses.npy').tolist()
+        start = len(losses)
+        print(f'🟢 Model checkpoint "{args.pretrained_model.split(os.sep)[-2]}{os.sep}{args.pretrained_model.split(os.sep)[-1]}" loaded')
+    else:
+        # Add only layers from GraFormer and MeshGraFormer
+        filtered_state_dict = {}
+        for k, v in state_dict.items():
+            k_new = k.replace('module.roi_heads.', '')
+            if check_layers_to_load(k_new):
+                filtered_state_dict[k_new] = v
+                
+        model_state_dict = model.state_dict()
+        original_state_dict = {k: v.clone() for k, v in model_state_dict.items()}
+        model_state_dict.update(filtered_state_dict)
+        model.load_state_dict(model_state_dict)
+        print(f'🟢 GraFormer and MeshGraFormer parameters loaded')
+        start = 0
 else:
     losses = []
     start = 0
@@ -332,7 +370,7 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
             # total_loss = sum(loss_dict.get(k, 0) for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric'])
             # loss = sum(loss_dict.get(k, 0) / total_loss for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric']) if total_loss > 0 else 0
 
-            loss = sum(loss_dict.get(k, 0) for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric'])
+            loss = sum(loss_dict[k] for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric'] if loss_dict[k] is not None)
 
             
             scaler.scale(loss).backward()
@@ -366,7 +404,7 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
         running_loss2d += loss_dict['loss_keypoint']
         running_loss3d += loss_dict['loss_keypoint3d'].data
         running_mesh_loss3d += loss_dict['loss_mesh3d'].data
-        if 'loss_photometric' in loss_dict.keys():
+        if 'loss_photometric' in loss_dict.keys() and loss_dict['loss_photometric'] is not None:
             running_photometric_loss += loss_dict['loss_photometric'].data
 
         if (i+1) % args.log_batch == 0:    # print every args.log_iter mini-batches
@@ -466,7 +504,7 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
                             pred_mesh3d_path = os.path.join(base_mesh3d_folder_path, f'mesh3d_pred_epoch_{epoch+1}.ply')
                             mesh_to_ply(results['mesh3d'][i], right_hand_faces, pred_mesh3d_path)
                 
-                loss = sum(loss_dict.get(k, 0) for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric'])
+                loss = sum(loss_dict[k] for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric'] if loss_dict[k] is not None)
                 
             # else:
             #     targets = [{k: v.to(device) for k, v in t.items() if k in keys} for t in data_dict]
@@ -488,7 +526,7 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
             val_loss2d += loss_dict['loss_keypoint']
             val_loss3d += loss_dict['loss_keypoint3d'].data
             val_mesh_loss3d += loss_dict['loss_mesh3d'].data
-            if 'loss_photometric' in loss_dict.keys():
+            if 'loss_photometric' in loss_dict.keys() and loss_dict['loss_photometric'] is not None:
                 running_photometric_loss += loss_dict['loss_photometric'].data
             
             batch_metrics = compute_metrics(targets, results, right_hand_faces)
