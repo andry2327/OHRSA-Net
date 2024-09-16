@@ -36,10 +36,10 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 # from ultralytics.models import YOLO
 
 '------------------ OTHER INPUT PARAMETERS ------------------'
-IS_SAMPLE_DATASET = True # to use a sample of original dataset
+IS_SAMPLE_DATASET = False # to use a sample of original dataset
 TRAINING_SUBSET_SIZE = 0.001
 VALIDATION_SUBSET_SIZE = 0.001
-USE_CUDA = False
+USE_CUDA = True
 SAVE_TRAINING_RESULTS = True # Save 3d pose and mesh prediction during training and validation
 
 # Parameters for visualization during training
@@ -53,8 +53,8 @@ SEQUENCES_TO_VISUALIZE = [
 
 '------------------------------------------------------------'
 '------------------ INPUT PARAMETERS for MULTI-FRAME features ------------------'
-N_PREVIOUS_FRAMES = 1
-STRIDE_PREVIOUS_FRAMES = 3
+N_PREVIOUS_FRAMES = 2
+STRIDE_PREVIOUS_FRAMES = 30
 
 '-------------------------------------------------------------------------------'
 
@@ -63,7 +63,7 @@ output_folder = args.output_file.rpartition(os.sep)[0]
 if not os.path.exists(output_folder):
     os.makedirs(output_folder)
 
-# '''
+'''
 if not USE_CUDA:
     os.environ["CUDA_VISIBLE_DEVICES"] = "" # DEBUG
 # DEBUG
@@ -87,7 +87,7 @@ args.hands_connectivity_type = 'base'
 args.use_autocast = False
 # args.visualize = True
 # args.output_results = '/content/drive/MyDrive/Thesis/THOR-Net_trained_on_POV-Surgery_object_False/Training-100samples--20-06-2024_17-08/output_results'
-# '''
+'''
 
 # Define device
 device = torch.device(f'cuda:{args.gpu_number[0]}' if torch.cuda.is_available() and USE_CUDA else 'cpu')
@@ -296,7 +296,7 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
                                     num_classes=num_classes, dataset_name=args.dataset_name)
             
             if SAVE_TRAINING_RESULTS:
-                for i in range(len(results['keypoint2d'])): # TODO: TO FIX
+                for i in range(len(results['keypoint2d'])):
                     frame_path = data_dict[i]['path']
                     seq_name, frame = frame_path.split(os.sep)[-2:]
                     frame = os.path.splitext(frame)[0] 
@@ -468,9 +468,6 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
                 
                 loss = sum(loss_dict.get(k, 0) for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric'])
                 
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
             # else:
             #     targets = [{k: v.to(device) for k, v in t.items() if k in keys} for t in data_dict]
             #     inputs = torch.stack([t['inputs']for t in data_dict]).to(device)
@@ -572,4 +569,6 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
     # Decay Learning Rate
     scheduler.step()
 
-logging.info('Finished Training')
+current_timestamp = datetime.datetime.now(pytz.timezone("Europe/Rome")).strftime("%d %B %Y at %H:%M")
+logging.info(f'\nTraining ended on {current_timestamp}') if not log_file else None
+print(f'\nTraining ended on {current_timestamp}')
