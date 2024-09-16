@@ -12,6 +12,7 @@ import torch.optim as optim
 import logging
 import sys
 import os
+import shutil
 import datetime
 import pytz
 import cv2
@@ -19,6 +20,8 @@ from tqdm import tqdm
 
 from utils.options import parse_args_function
 from utils.utils import freeze_component, calculate_keypoints, create_loader, prepare_data_for_evaluation
+from utils.vis_utils import keypoints_to_ply, mesh_to_ply
+from utils.metrics import compute_metrics, accumulate_metrics
 
 # for H2O dataset only
 # from utils.h2o_utils.h2o_dataset_utils import load_tar_split 
@@ -34,9 +37,19 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 '------------------ OTHER INPUT PARAMETERS ------------------'
 IS_SAMPLE_DATASET = True # to use a sample of original dataset
-TRAINING_SUBSET_SIZE = 0.01
-VALIDATION_SUBSET_SIZE = 0.01
-USE_CUDA = True
+TRAINING_SUBSET_SIZE = 0.001
+VALIDATION_SUBSET_SIZE = 0.001
+USE_CUDA = False
+SAVE_TRAINING_RESULTS = True # Save 3d pose and mesh prediction during training and validation
+
+# Parameters for visualization during training
+RIGHT_HAND_FACES_PATH = '/home/aidara/Desktop/Thesis_Andrea/data/right_hand_faces.pt'
+SEQUENCES_TO_VISUALIZE = [
+    # train split
+    'd_diskplacer_1/00145', 'd_diskplacer_1/00430', 'i_friem_2/01451', 'd_scalpel_2/01318', 'i_scalpel_2/01599', 's_friem_3/01664',
+    # validation split
+    'd_scalpel_1/01402', 'r_diskplacer_5/00191', 's_friem_2/00322'
+    ]
 
 '------------------------------------------------------------'
 '------------------ INPUT PARAMETERS for MULTI-FRAME features ------------------'
@@ -50,7 +63,7 @@ output_folder = args.output_file.rpartition(os.sep)[0]
 if not os.path.exists(output_folder):
     os.makedirs(output_folder)
 
-'''
+# '''
 if not USE_CUDA:
     os.environ["CUDA_VISIBLE_DEVICES"] = "" # DEBUG
 # DEBUG
@@ -61,7 +74,7 @@ args.output_file = '/home/aidara/Desktop/Thesis_Andrea/OHRSA-Net_Experiments/out
 output_folder = args.output_file.rpartition(os.sep)[0]
 if not os.path.exists(output_folder):
     os.makedirs(output_folder) 
-args.batch_size = 1
+args.batch_size = 2
 args.num_iteration = 20
 args.object = False 
 args.hid_size = 96
@@ -74,7 +87,10 @@ args.hands_connectivity_type = 'base'
 args.use_autocast = False
 # args.visualize = True
 # args.output_results = '/content/drive/MyDrive/Thesis/THOR-Net_trained_on_POV-Surgery_object_False/Training-100samples--20-06-2024_17-08/output_results'
-'''
+# '''
+
+# Define device
+device = torch.device(f'cuda:{args.gpu_number[0]}' if torch.cuda.is_available() and USE_CUDA else 'cpu')
 
 other_params = {
     'IS_SAMPLE_DATASET': IS_SAMPLE_DATASET,
@@ -85,8 +101,26 @@ other_params = {
     'STRIDE_PREVIOUS_FRAMES': STRIDE_PREVIOUS_FRAMES
 }
 
-# Define device
-device = torch.device(f'cuda:{args.gpu_number[0]}' if torch.cuda.is_available() and USE_CUDA else 'cpu')
+right_hand_faces = None
+
+if SAVE_TRAINING_RESULTS:
+    
+    right_hand_faces = torch.load(RIGHT_HAND_FACES_PATH, map_location=device)
+    
+    training_results_folder = 'training_results'
+    training_results_path = os.path.join(output_folder, training_results_folder)
+    if os.path.exists(training_results_path):
+        shutil.rmtree(training_results_path)
+        
+    train_results_path = os.path.join(training_results_path, 'train')
+    if os.path.exists(train_results_path):
+        shutil.rmtree(train_results_path)
+    os.makedirs(train_results_path)
+    
+    val_results_path = os.path.join(training_results_path, 'val')
+    if os.path.exists(val_results_path):
+        shutil.rmtree(val_results_path)
+    os.makedirs(val_results_path) 
 
 use_cuda = False
 if torch.cuda.is_available():
@@ -245,47 +279,87 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
         # zero the parameter gradients
         optimizer.zero_grad()
         
-        if args.use_autocast:
-            with torch.amp.autocast():
-                targets = [{k: v.to(device) for k, v in t.items() if k in keys} for t in data_dict]
-                inputs = torch.stack([t['inputs'] for t in data_dict]).to(device)
-                results = model(inputs).to(device)
-
-                keypoint3d_gt = [dd['keypoints3d'] for dd in data_dict]
-                mesh3d_gt = [dd['mesh3d'] for dd in data_dict]
-                original_images = [x.permute(1, 2, 0) for x in inputs]
-                palms_gt = [dd['palm'] for dd in data_dict]
-
-                loss_dict = compute_loss(results['keypoint3d'], keypoint3d_gt, results['mesh3d'], mesh3d_gt,
-                                        original_images, palms_gt, photometric=args.photometric,
-                                        num_classes=num_classes, dataset_name=args.dataset_name)
-                loss = sum(loss_dict.get(k, 0) for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric'])
-
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-        else:
-            # Forward
+        # if args.use_autocast:
+        with torch.amp.autocast(device_type=device.type, enabled=args.use_autocast):
             targets = [{k: v.to(device) for k, v in t.items() if k in keys} for t in data_dict]
-            inputs = torch.stack([t['inputs']for t in data_dict]).to(device)
-            
+            inputs = torch.stack([t['inputs'] for t in data_dict]).to(device)
             results = model(inputs)
-            
-            # Compute losses 
+
+            keypoint2d_gt = [dd['keypoints'].to(device) for dd in data_dict]
             keypoint3d_gt = [dd['keypoints3d'].to(device) for dd in data_dict]
             mesh3d_gt = [dd['mesh3d'].to(device) for dd in data_dict]
             original_images = [x.permute(1, 2, 0).to(device) for x in inputs]
             palms_gt = [dd['palm'].to(device) for dd in data_dict]
+
+            loss_dict = compute_loss(results['keypoint2d'], keypoint2d_gt, results['keypoint3d'], keypoint3d_gt, results['mesh3d'], mesh3d_gt,
+                                    original_images, palms_gt, photometric=args.photometric,
+                                    num_classes=num_classes, dataset_name=args.dataset_name)
             
-            loss_dict = compute_loss(results['keypoint3d'], keypoint3d_gt, results['mesh3d'], mesh3d_gt,
-                                original_images, palms_gt, 
-                                photometric=args.photometric, num_classes=num_classes, dataset_name=args.dataset_name)
+            if SAVE_TRAINING_RESULTS:
+                for i in range(len(results['keypoint2d'])): # TODO: TO FIX
+                    frame_path = data_dict[i]['path']
+                    seq_name, frame = frame_path.split(os.sep)[-2:]
+                    frame = os.path.splitext(frame)[0] 
+                    if f'{seq_name}/{frame}' in SEQUENCES_TO_VISUALIZE:
+                        base_folder_path = os.path.join(train_results_path, seq_name, frame)
+                        if not os.path.exists(base_folder_path):
+                            os.makedirs(base_folder_path)
+                            
+                        base_kps3d_folder_path = os.path.join(base_folder_path, 'keypoints3d')
+                        if not os.path.exists(base_kps3d_folder_path):
+                            os.makedirs(base_kps3d_folder_path)
+                        
+                        # TODO: save keypoint2d visual
+                        
+                        gt_kps3d_path = os.path.join(base_kps3d_folder_path, 'gt_kps3d.ply')
+                        if not os.path.exists(gt_kps3d_path):
+                            keypoints_to_ply(targets[i]['keypoints3d'], gt_kps3d_path)
+                            
+                        pred_kps3d_path = os.path.join(base_kps3d_folder_path, f'kps3d_pred_epoch_{epoch+1}.ply')
+                        keypoints_to_ply(results['keypoint3d'][i], pred_kps3d_path)
+                        
+                        base_mesh3d_folder_path = os.path.join(base_folder_path, 'mesh3d')
+                        if not os.path.exists(base_mesh3d_folder_path):
+                            os.makedirs(base_mesh3d_folder_path)
+                        
+                        gt_mesh3d_path = os.path.join(base_mesh3d_folder_path, 'gt_mesh3d.ply')
+                        if not os.path.exists(gt_mesh3d_path):
+                            mesh_to_ply(targets[i]['mesh3d'], right_hand_faces, gt_mesh3d_path)
+                            
+                        pred_mesh3d_path = os.path.join(base_mesh3d_folder_path, f'mesh3d_pred_epoch_{epoch+1}.ply')
+                        mesh_to_ply(results['mesh3d'][i], right_hand_faces, pred_mesh3d_path)
             
+            # total_loss = sum(loss_dict.get(k, 0) for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric'])
+            # loss = sum(loss_dict.get(k, 0) / total_loss for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric']) if total_loss > 0 else 0
+
             loss = sum(loss_dict.get(k, 0) for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric'])
+
             
-            # Backpropagate
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        # else: pass
+            # # Forward
+            # targets = [{k: v.to(device) for k, v in t.items() if k in keys} for t in data_dict]
+            # inputs = torch.stack([t['inputs']for t in data_dict]).to(device)
+            
+            # results = model(inputs)
+            
+            # # Compute losses 
+            # keypoint3d_gt = [dd['keypoints3d'].to(device) for dd in data_dict]
+            # mesh3d_gt = [dd['mesh3d'].to(device) for dd in data_dict]
+            # original_images = [x.permute(1, 2, 0).to(device) for x in inputs]
+            # palms_gt = [dd['palm'].to(device) for dd in data_dict]
+            
+            # loss_dict = compute_loss(results['keypoint3d'], keypoint3d_gt, results['mesh3d'], mesh3d_gt,
+            #                     original_images, palms_gt, 
+            #                     photometric=args.photometric, num_classes=num_classes, dataset_name=args.dataset_name)
+            
+            # loss = sum(loss_dict.get(k, 0) for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric'])
+            
+            # # Backpropagate
+            # loss.backward()
+            # optimizer.step()
 
         # print statistics
         train_loss2d += loss_dict['loss_keypoint']
@@ -320,6 +394,17 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
         val_mesh_loss3d = 0.0
         val_photometric_loss = 0.0
         
+        total_metrics = {
+            'D2d': 0.0,
+            'P2d': 0.0,
+            'MPJPE': 0.0,
+            'PVE': 0.0,
+            'PA-MPJPE': 0.0,
+            'PA-PVE': 0.0
+        }
+
+        num_batches = 0 
+        
         # model.module.transform.training = False
         
         if 'h2o' in args.dataset_name.lower():
@@ -333,27 +418,8 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
             data_dict = val_data
         
             # Forward pass
-            if args.use_autocast:
-                with torch.amp.autocast():
-                    targets = [{k: v.to(device) for k, v in t.items() if k in keys} for t in data_dict]
-                    inputs = torch.stack([t['inputs']for t in data_dict]).to(device)
-                    results = model(inputs)
-                    
-                    # Compute losses 
-                    keypoint3d_gt = [dd['keypoints3d'].to(device) for dd in data_dict]
-                    mesh3d_gt = [dd['mesh3d'].to(device) for dd in data_dict]
-                    original_images = [x.permute(1, 2, 0).to(device) for x in inputs]
-                    palms_gt = [dd['palm'].to(device) for dd in data_dict]
-                    
-                    loss_dict = compute_loss(results['keypoint3d'], keypoint3d_gt, results['mesh3d'], mesh3d_gt,
-                                        original_images, palms_gt, 
-                                        photometric=args.photometric, num_classes=num_classes, dataset_name=args.dataset_name)
-                    
-                    loss = sum(loss_dict.values())
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-            else:
+            # if args.use_autocast:
+            with torch.amp.autocast(device_type=device.type, enabled=args.use_autocast):
                 targets = [{k: v.to(device) for k, v in t.items() if k in keys} for t in data_dict]
                 inputs = torch.stack([t['inputs']for t in data_dict]).to(device)
                 results = model(inputs)
@@ -364,18 +430,74 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
                 original_images = [x.permute(1, 2, 0).to(device) for x in inputs]
                 palms_gt = [dd['palm'].to(device) for dd in data_dict]
                 
-                loss_dict = compute_loss(results['keypoint3d'], keypoint3d_gt, results['mesh3d'], mesh3d_gt,
+                loss_dict = compute_loss(results['keypoint2d'], keypoint2d_gt, results['keypoint3d'], keypoint3d_gt, results['mesh3d'], mesh3d_gt,
                                     original_images, palms_gt, 
                                     photometric=args.photometric, num_classes=num_classes, dataset_name=args.dataset_name)
                 
-                loss = sum(loss_dict.values())
+                if SAVE_TRAINING_RESULTS:
+                    for i in range(len(results['keypoint2d'])):
+                        frame_path = data_dict[i]['path']
+                        seq_name, frame = frame_path.split(os.sep)[-2:]
+                        frame = os.path.splitext(frame)[0] 
+                        if f'{seq_name}/{frame}' in SEQUENCES_TO_VISUALIZE:
+                            base_folder_path = os.path.join(val_results_path, seq_name, frame)
+                            if not os.path.exists(base_folder_path):
+                                os.makedirs(base_folder_path)
+                                
+                            base_kps3d_folder_path = os.path.join(base_folder_path, 'keypoints3d')
+                            if not os.path.exists(base_kps3d_folder_path):
+                                os.makedirs(base_kps3d_folder_path)
+                                
+                            gt_kps3d_path = os.path.join(base_kps3d_folder_path, 'gt_kps3d.ply')
+                            if not os.path.exists(gt_kps3d_path):
+                                keypoints_to_ply(targets[i]['keypoints3d'], gt_kps3d_path)
+                                
+                            pred_kps3d_path = os.path.join(base_kps3d_folder_path, f'kps3d_pred_epoch_{epoch+1}.ply')
+                            keypoints_to_ply(results['keypoint3d'][i], pred_kps3d_path)
+                            
+                            base_mesh3d_folder_path = os.path.join(base_folder_path, 'mesh3d')
+                            if not os.path.exists(base_mesh3d_folder_path):
+                                os.makedirs(base_mesh3d_folder_path)
+                            
+                            gt_mesh3d_path = os.path.join(base_mesh3d_folder_path, 'gt_mesh3d.ply')
+                            if not os.path.exists(gt_mesh3d_path):
+                                mesh_to_ply(targets[i]['mesh3d'], right_hand_faces, gt_mesh3d_path)
+                                
+                            pred_mesh3d_path = os.path.join(base_mesh3d_folder_path, f'mesh3d_pred_epoch_{epoch+1}.ply')
+                            mesh_to_ply(results['mesh3d'][i], right_hand_faces, pred_mesh3d_path)
+                
+                loss = sum(loss_dict.get(k, 0) for k in ['loss_keypoint3d', 'loss_mesh3d', 'loss_photometric'])
+                
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            # else:
+            #     targets = [{k: v.to(device) for k, v in t.items() if k in keys} for t in data_dict]
+            #     inputs = torch.stack([t['inputs']for t in data_dict]).to(device)
+            #     results = model(inputs)
+                
+            #     # Compute losses 
+            #     keypoint3d_gt = [dd['keypoints3d'].to(device) for dd in data_dict]
+            #     mesh3d_gt = [dd['mesh3d'].to(device) for dd in data_dict]
+            #     original_images = [x.permute(1, 2, 0).to(device) for x in inputs]
+            #     palms_gt = [dd['palm'].to(device) for dd in data_dict]
+                
+            #     loss_dict = compute_loss(results['keypoint3d'], keypoint3d_gt, results['mesh3d'], mesh3d_gt,
+            #                         original_images, palms_gt, 
+            #                         photometric=args.photometric, num_classes=num_classes, dataset_name=args.dataset_name)
+                
+            #     loss = sum(loss_dict.values())
             
             val_loss2d += loss_dict['loss_keypoint']
             val_loss3d += loss_dict['loss_keypoint3d'].data
             val_mesh_loss3d += loss_dict['loss_mesh3d'].data
             if 'loss_photometric' in loss_dict.keys():
                 running_photometric_loss += loss_dict['loss_photometric'].data
-                
+            
+            batch_metrics = compute_metrics(targets, results, right_hand_faces)
+            num_batches += 1
+            total_metrics = accumulate_metrics(total_metrics, batch_metrics, num_batches)
+    
             # visualizations
             '''if args.visualize: 
                 from test_THOR import visualize2d
@@ -391,7 +513,7 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
                 else:
                     pass
                 
-                outputs = (result, loss_dict)
+                outputs = (results, loss_dict)
                 
                 predictions, img, palm, labels = prepare_data_for_evaluation(data_dict, outputs, img, keys, device, args.split)
                 
@@ -418,6 +540,14 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
         print('Epoch %d/%d - val loss 2d: %.8f, val loss 3d: %.8f, val mesh loss 3d: %.8f, val photometric loss: %.8f' % 
                     (epoch + 1, start+args.num_iterations, val_loss2d / (v+1), val_loss3d / (v+1), val_mesh_loss3d / (v+1), running_photometric_loss / (v+1)))  
 
+        # Print metrics
+        epoch_info = f"Epoch {epoch+1}/{start+args.num_iterations}"
+        metrics_str = f"{epoch_info} metrics - "
+        metrics_str += ', '.join([f"{key}: {value:.4f}" for key, value in total_metrics.items()])
+
+        print(metrics_str)
+        logging.info(metrics_str)
+        
         tot_val_losses =  (val_loss3d / (v+1)) + (val_mesh_loss3d / (v+1)) + (val_photometric_loss / (v+1))
         if (epoch+1) % args.snapshot_epoch == 0 and tot_val_losses < min_total_loss: # save model only if total val loss is lower than minimum reached
             torch.save(model.state_dict(), args.output_file+str(epoch+1)+'.pkl')

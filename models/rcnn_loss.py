@@ -136,7 +136,7 @@ def heatmaps_to_keypoints(maps, rois):
 
     return xy_preds.permute(0, 2, 1), end_scores
 
-def compute_loss(#keypoint_logits, proposals, gt_keypoints, keypoint_matched_idxs, 
+def compute_loss(keypoint2d_pred, keypoint2d_gt,
                     keypoint3d_pred=None, keypoint3d_gt=None, mesh3d_pred=None, 
                     mesh3d_gt=None, original_images=None, palms_gt=None,
                     photometric=False, num_classes=2, dataset_name='povsurgery'):
@@ -197,29 +197,34 @@ def compute_loss(#keypoint_logits, proposals, gt_keypoints, keypoint_matched_idx
 
     # keypoint_logits = keypoint_logits.view(N * K, H * W)
     
-    # Heatmap Loss
-    # keypoint_loss = F.cross_entropy(keypoint_logits[valid], keypoint_targets[valid])
-    keypoint_loss = -1 # no kps2d loss for OHRSA-Net
-    
-    # 3D pose Loss
     if num_classes > 2:
+        keypoint2d_gt = torch.cat(keypoint2d_gt, dim=0)[:, :, :2]
         keypoint3d_targets = torch.cat(keypoint3d_gt, dim=0)
         mesh3d_targets = torch.cat(mesh3d_gt, dim=0) 
     else:
+        keypoint2d_gt = torch.cat(keypoint2d_gt, dim=0)[:, :, :2]
+        keypoint2d_gt = keypoint2d_gt.view(N, K, 2)
         keypoint3d_targets = torch.cat(kps3d, dim=0).view(N, K, 3)
         mesh3d_targets = torch.cat(meshes3d, dim=0)
-
+    
+    # 2D keypoints 
+    N, K, D = keypoint2d_gt.shape
+    keypoint2d_pred = keypoint2d_pred.view(N * K, 2)
+    keypoint2d_gt = keypoint2d_gt.view(N * K, 2)
+    keypoint2d_loss = F.mse_loss(keypoint2d_pred, keypoint2d_gt)
+    
+    # 3D pose Loss
     N, K, D = keypoint3d_targets.shape
     keypoint3d_pred = keypoint3d_pred.view(N * K, 3)
     keypoint3d_targets = keypoint3d_targets.view(N * K, 3)
-    keypoint3d_loss = F.mse_loss(keypoint3d_pred, keypoint3d_targets) / 1000
+    keypoint3d_loss = F.mse_loss(keypoint3d_pred, keypoint3d_targets)
     
     # 3D shape Loss
     N, K, D = mesh3d_pred[:, :, :3].shape
     xyz_rgb_pred = torch.clone(mesh3d_pred)
     mesh3d_pred = torch.reshape(mesh3d_pred[:, :, :3], (N * K, D))
     mesh3d_targets = torch.reshape(mesh3d_targets, (N * K, D)) 
-    mesh3d_loss = F.mse_loss(mesh3d_pred, mesh3d_targets) / 1000
+    mesh3d_loss = F.mse_loss(mesh3d_pred, mesh3d_targets)
 
     # Photometric Loss
     # To penalize rgb values with the projection of the GT shape, replace predicted xyz with GT xyz
@@ -245,7 +250,7 @@ def compute_loss(#keypoint_logits, proposals, gt_keypoints, keypoint_matched_idx
     # mesh3d_loss += mesh3d_loss_smooth
 
     losses = {
-        'loss_keypoint': keypoint_loss,
+        'loss_keypoint': keypoint2d_loss,
         'loss_keypoint3d': keypoint3d_loss,
         'loss_mesh3d': mesh3d_loss,
         'loss_photometric': photometric_loss

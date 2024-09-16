@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import cv2
 import pymeshlab
 from manopth.manolayer import ManoLayer
+import torch
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -701,3 +702,107 @@ def write_obj(verts, faces, filename, texture=None):
     ms.add_mesh(m, f'{os.path.join(output_dir, filename)}')
     filename += '.obj'
     ms.save_current_mesh(f'{os.path.join(output_dir, filename)}', save_vertex_normal=True, save_vertex_color=True, save_polygonal=True, format="obj")
+
+
+''' CUSTOM '''
+
+def keypoints_to_ply(tensor, filename):
+    # Convert the tensor to a NumPy array if it's a PyTorch tensor
+    if isinstance(tensor, torch.Tensor):
+        data = tensor.detach().squeeze().cpu().numpy()
+    else:
+        data = np.squeeze(tensor)
+
+    # Verify that the tensor has the correct shape (1, 21, 3)
+    if data.shape[0] != 21 or data.shape[1] != 3:
+        raise ValueError("Expected tensor shape (1, 21, 3) for keypoints.")
+
+    vertices = data[:, :3]
+
+    # Define the keypoint connections
+    kps_lines = [
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [3, 17],
+        [0, 13],
+        [13, 14],
+        [14, 15],
+        [15, 16],
+        [0, 4],
+        [4, 5],
+        [5, 6],
+        [6, 18],
+        [0, 10],
+        [10, 11],
+        [11, 12],
+        [12, 19],
+        [0, 7],
+        [7, 8],
+        [8, 9],
+        [9, 20]
+    ]
+
+    # Define the header for the PLY file
+    ply_header = f'''ply
+format ascii 1.0
+element vertex {vertices.shape[0]}
+property float x
+property float y
+property float z
+element edge {len(kps_lines)}
+property int vertex1
+property int vertex2
+end_header
+'''
+
+    # Open the file to write
+    with open(filename, 'w') as ply_file:
+        # Write the header
+        ply_file.write(ply_header)
+        
+        # Write the vertices
+        for point in vertices:
+            ply_file.write(f"{point[0]} {point[1]} {point[2]}\n")
+        
+        # Write the edges (connections)
+        for line in kps_lines:
+            ply_file.write(f"{line[0]} {line[1]}\n")
+            
+def mesh_to_ply(tensor, faces, filename):
+    # Convert the tensor to a NumPy array if it's a PyTorch tensor
+    if isinstance(tensor, torch.Tensor):
+        data = tensor.detach().squeeze().cpu().numpy()
+    else:
+        data = np.squeeze(tensor)
+    
+    # Verify that the tensor has the correct shape (778, 3) or (778, 6)
+    if data.shape[0] != 778 or (data.shape[1] != 3 and data.shape[1] != 6):
+        raise ValueError("Expected tensor shape (778, 3) or (778, 6) for a mesh.")
+
+    vertices = data[:, :3]  # Use only the first three columns for vertices
+
+    # Define the header for the PLY file
+    ply_header = f'''ply
+format ascii 1.0
+element vertex {vertices.shape[0]}
+property float x
+property float y
+property float z
+element face {faces.shape[0]}
+property list uchar int vertex_indices
+end_header
+'''
+
+    # Open the file to write
+    with open(filename, 'w') as ply_file:
+        # Write the header
+        ply_file.write(ply_header)
+        
+        # Write the vertices (mesh)
+        for point in vertices:
+            ply_file.write(f"{point[0]} {point[1]} {point[2]}\n")
+        
+        # Write the faces (triangle indices)
+        for face in faces:
+            ply_file.write(f"3 {face[0]} {face[1]} {face[2]}\n")

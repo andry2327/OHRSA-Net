@@ -61,7 +61,7 @@ class OHRSA(nn.Module):
             self.mesh_graformer = MeshGraFormer(initial_adj=adj.to(self.device), hid_dim=num_features // 4, coords_dim=(input_size, output_size), 
                             num_kps3d=num_kps3d, num_verts=num_verts, dropout=0.25, 
                             adj_matrix_root=ADJ_MATRIX_ROOT)
-
+    
     def forward(self, images, targets=None):
         
         # get 2d keypoints and feature maps
@@ -104,9 +104,9 @@ class OHRSA(nn.Module):
         #     file.write(f'{datetime.datetime.now()} | END mesh3d prediction\n')
         
         results = {
+            'keypoint2d': keypoints2d,
             'keypoint3d': keypoint3d,
             'mesh3d': mesh3d
         }
         
-        return results
-        
+        return results  

@@ -64,7 +64,7 @@ def parse_logs(log_file):
 
     with open(log_file, 'r') as f:
         for line in f:
-            if '--' not in line and 'Epoch' in line:
+            if '--' not in line and 'Epoch' in line and 'metrics' not in line:
                 if '[' in line and ']' in line:  # train loss
                     line_splitted = line.split(' ')
                     epoch = int(line_splitted[1].split('/')[0])
