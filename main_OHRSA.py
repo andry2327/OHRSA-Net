@@ -37,10 +37,10 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 '------------------ OTHER INPUT PARAMETERS ------------------'
 IS_SAMPLE_DATASET = True # to use a sample of original dataset
-TRAINING_SUBSET_SIZE = 0.0001
-VALIDATION_SUBSET_SIZE = 0.0001
+TRAINING_SUBSET_SIZE = 0.001
+VALIDATION_SUBSET_SIZE = 0.001
 USE_CUDA = False
-SAVE_TRAINING_RESULTS = True # Save 3d pose and mesh prediction during training and validation
+SAVE_TRAINING_RESULTS = False # Save 3d pose and mesh prediction during training and validation
 
 # Parameters for visualization during training
 RIGHT_HAND_FACES_PATH = '/home/aidara/Desktop/Thesis_Andrea/data/right_hand_faces.pt'
@@ -63,7 +63,7 @@ output_folder = args.output_file.rpartition(os.sep)[0]
 if not os.path.exists(output_folder):
     os.makedirs(output_folder)
 
-# '''
+'''
 if not USE_CUDA:
     os.environ["CUDA_VISIBLE_DEVICES"] = "" # DEBUG
 # DEBUG
@@ -75,19 +75,33 @@ output_folder = args.output_file.rpartition(os.sep)[0]
 if not os.path.exists(output_folder):
     os.makedirs(output_folder) 
 args.batch_size = 1
-args.num_iteration = 20
+args.num_iteration = 30
 args.object = False 
 args.hid_size = 96
-args.photometric = False
+args.photometric = True
+args.bloodiness = True
 args.multiframe = False # IMPORTANT: Keep False, it does not support multi-frame now
 args.log_batch = 1 # frequency to print training losses
 args.val_epoch = 1 # frequency to compute validation loss
-args.pretrained_model='/home/aidara/Desktop/Thesis_Andrea/data/checkpoints/THOR-Net_trained_on_HO3D/right_hand/model-11.pkl'
+args.pretrained_model=''#'/home/aidara/Desktop/Thesis_Andrea/data/checkpoints/THOR-Net_trained_on_HO3D/right_hand/model-11.pkl'
 args.hands_connectivity_type = 'base'
 args.use_autocast = False
+args.learning_rate = 0.0000001 # 1e-12, default = 0.0001
+args.lr_step = 100
+args.lr_step_gamma = 0.9
 # args.visualize = True
 # args.output_results = '/content/drive/MyDrive/Thesis/THOR-Net_trained_on_POV-Surgery_object_False/Training-100samples--20-06-2024_17-08/output_results'
-# '''
+'''
+
+# ## DEBUG time
+# from utils.utils_shared import log_time_file_path
+# import datetime
+# print(log_time_file_path)
+# with open(log_time_file_path, 'w') as file:
+#     file.write(f'Logging timing, using 1 GPU ({datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")})\n\n')
+#     file.write('-'*50)
+#     file.write('\n\n')
+# ## DEBUG time  
 
 # Define device
 device = torch.device(f'cuda:{args.gpu_number[0]}' if torch.cuda.is_available() and USE_CUDA else 'cpu')
@@ -217,7 +231,7 @@ model = OHRSA(keypoints2d_extractor_path=args.keypoints2d_extractor_path,
               num_classes=num_classes, num_kps2d=21, num_kps3d=21, num_verts=778,
               photometric=args.photometric, hid_size=args.hid_size, graph_input=graph_input,
               num_features=args.num_features, device=device, dataset_name='povsurgery',
-              hands_connectivity_type=args.hands_connectivity_type, multiframe=args.multiframe)
+              hands_connectivity_type=args.hands_connectivity_type, multiframe=args.multiframe, bloodiness=args.bloodiness)
 
 # pytorch_total_params = sum(p.numel() for p in model.parameters()) # DEBUG
 # print(f'# params OHRSA-Net: {pytorch_total_params}') # DEBUG
@@ -270,7 +284,7 @@ if args.pretrained_model != '':
         # Add only layers from GraFormer and MeshGraFormer
         filtered_state_dict = {}
         for k, v in state_dict.items():
-            k_new = k.replace('module.roi_heads.', '')
+            k_new = k.replace('module.roi_heads.', 'module.')
             if check_layers_to_load(k_new):
                 filtered_state_dict[k_new] = v
                 
@@ -280,6 +294,7 @@ if args.pretrained_model != '':
         model.load_state_dict(model_state_dict)
         print(f'🟢 GraFormer and MeshGraFormer parameters loaded')
         start = 0
+        losses = []
 else:
     losses = []
     start = 0
@@ -293,7 +308,7 @@ optimizer = optim.Adam(params_to_update, lr=args.learning_rate)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_step_gamma)
 scheduler.last_epoch = start
 
-keys = ['boxes', 'labels', 'keypoints', 'keypoints3d', 'mesh3d', 'palm']
+keys = ['boxes', 'labels', 'keypoints', 'keypoints3d', 'mesh3d', 'palm', 'path']
 
 """ training """
 
@@ -319,9 +334,11 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
         
         # if args.use_autocast:
         with torch.amp.autocast(device_type=device.type, enabled=args.use_autocast):
-            targets = [{k: v.to(device) for k, v in t.items() if k in keys} for t in data_dict]
+            targets = [{k: v.to(device) for k, v in t.items() if k in keys and k != 'path'} for t in data_dict]
             inputs = torch.stack([t['inputs'] for t in data_dict]).to(device)
-            results = model(inputs)
+            fps = [t['path'] for t in data_dict] # frame paths
+            
+            results = model(inputs, fps=fps)
 
             keypoint2d_gt = [dd['keypoints'].to(device) for dd in data_dict]
             keypoint3d_gt = [dd['keypoints3d'].to(device) for dd in data_dict]
@@ -423,7 +440,7 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
     pbar.close()
     
     losses.append((loss.data / (i+1)).cpu().numpy())
-        
+    
     # ''' ------------------------ VALIDATION ------------------------ '''
     
     if (epoch+1) % args.val_epoch == 0:
@@ -450,7 +467,7 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
             valloader = create_loader(args.dataset_name, h2o_data_dir, 'val', args.batch_size, h2o_info)
 
         pbar = tqdm(desc=f'Epoch {epoch+1} - val: ', total=len(valloader))
-        for v, val_data in enumerate(valloader):
+        for iv, val_data in enumerate(valloader):
             
             # get the inputs
             data_dict = val_data
@@ -458,15 +475,25 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
             # Forward pass
             # if args.use_autocast:
             with torch.amp.autocast(device_type=device.type, enabled=args.use_autocast):
-                targets = [{k: v.to(device) for k, v in t.items() if k in keys} for t in data_dict]
+                targets = [{k: v.to(device) for k, v in t.items() if k in keys and k != 'path'} for t in data_dict]
                 inputs = torch.stack([t['inputs']for t in data_dict]).to(device)
-                results = model(inputs)
+                fps = [t['path'] for t in data_dict] # frame paths
+                # with open(log_time_file_path, 'a') as file: # DEBUG time
+                #     file.write(f'{datetime.datetime.now()} | START Inputs {iv+1}\n')
+                results = model(inputs, fps=fps)
+                # with open(log_time_file_path, 'a') as file: # DEBUG time
+                #     file.write(f'{datetime.datetime.now()} | END Inputs {iv+1}\n')
+                
                 
                 # Compute losses 
-                keypoint3d_gt = [dd['keypoints3d'].to(device) for dd in data_dict]
-                mesh3d_gt = [dd['mesh3d'].to(device) for dd in data_dict]
-                original_images = [x.permute(1, 2, 0).to(device) for x in inputs]
-                palms_gt = [dd['palm'].to(device) for dd in data_dict]
+                keypoint2d_gt = [dd['keypoints'].to('cpu') for dd in data_dict]
+                keypoint3d_gt = [dd['keypoints3d'].to('cpu') for dd in data_dict]
+                mesh3d_gt = [dd['mesh3d'].to('cpu') for dd in data_dict]
+                original_images = [x.permute(1, 2, 0).to('cpu') for x in inputs]
+                palms_gt = [dd['palm'].to('cpu') for dd in data_dict]
+                
+                results = {key: value.cpu() for key, value in results.items()}
+                targets = [{k: v.cpu() for k, v in t.items() if isinstance(v, torch.Tensor)} for t in data_dict]
                 
                 loss_dict = compute_loss(results['keypoint2d'], keypoint2d_gt, results['keypoint3d'], keypoint3d_gt, results['mesh3d'], mesh3d_gt,
                                     original_images, palms_gt, 
@@ -527,7 +554,7 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
             val_loss3d += loss_dict['loss_keypoint3d'].data
             val_mesh_loss3d += loss_dict['loss_mesh3d'].data
             if 'loss_photometric' in loss_dict.keys() and loss_dict['loss_photometric'] is not None:
-                running_photometric_loss += loss_dict['loss_photometric'].data
+                val_photometric_loss += loss_dict['loss_photometric'].data
             
             batch_metrics = compute_metrics(targets, results, right_hand_faces)
             num_batches += 1
@@ -571,19 +598,19 @@ for epoch in range(start, start + args.num_iterations):  # loop over the dataset
         # model.module.transform.training = True
         
         logging.info('Epoch %d/%d - val loss 2d: %.8f, val loss 3d: %.8f, val mesh loss 3d: %.8f, val photometric loss: %.8f' % 
-                    (epoch + 1, start+args.num_iterations, val_loss2d / (v+1), val_loss3d / (v+1), val_mesh_loss3d / (v+1), running_photometric_loss / (v+1)))  
+                    (epoch + 1, start+args.num_iterations, val_loss2d / (iv+1), val_loss3d / (iv+1), val_mesh_loss3d / (iv+1), val_photometric_loss / (iv+1)))  
         print('Epoch %d/%d - val loss 2d: %.8f, val loss 3d: %.8f, val mesh loss 3d: %.8f, val photometric loss: %.8f' % 
-                    (epoch + 1, start+args.num_iterations, val_loss2d / (v+1), val_loss3d / (v+1), val_mesh_loss3d / (v+1), running_photometric_loss / (v+1)))  
+                    (epoch + 1, start+args.num_iterations, val_loss2d / (iv+1), val_loss3d / (iv+1), val_mesh_loss3d / (iv+1), val_photometric_loss / (iv+1)))  
 
         # Print metrics
         epoch_info = f"Epoch {epoch+1}/{start+args.num_iterations}"
         metrics_str = f"{epoch_info} metrics - "
-        metrics_str += ', '.join([f"{key}: {value:.4f}" for key, value in total_metrics.items()])
+        metrics_str += ', '.join([f"{key}: {value:.8f}" for key, value in total_metrics.items()])
 
         print(metrics_str)
         logging.info(metrics_str)
         
-        tot_val_losses =  (val_loss3d / (v+1)) + (val_mesh_loss3d / (v+1)) + (val_photometric_loss / (v+1))
+        tot_val_losses =  (val_loss3d / (iv+1)) + (val_mesh_loss3d / (iv+1)) + (val_photometric_loss / (iv+1))
         if (epoch+1) % args.snapshot_epoch == 0 and tot_val_losses < min_total_loss: # save model only if total val loss is lower than minimum reached
             torch.save(model.state_dict(), args.output_file+str(epoch+1)+'.pkl')
             np.save(args.output_file+str(epoch+1)+'-losses.npy', np.array(losses))

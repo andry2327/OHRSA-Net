@@ -46,6 +46,12 @@ def parse_args_function():
         action='store_true',
         help="Enable multiframe training"
     )
+    
+    parser.add_argument(
+        "--bloodiness",
+        action='store_true',
+        help="Inject bloodiness feature"
+    )
 
     parser.add_argument(
         "--obj_root",
