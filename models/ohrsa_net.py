@@ -88,7 +88,7 @@ class OHRSA(nn.Module):
         
         if self.bloodiness and fps:
             bloodiness = get_keypoints_bloodiness(keypoints2d_list, fps)
-            bloodiness = torch.tensor(bloodiness).unsqueeze(-1)
+            bloodiness = torch.tensor(bloodiness).unsqueeze(-1).to(device=self.device)
         
         keypoints2d = torch.cat(keypoints2d_list)
         keypoints2d /= torch.tensor([images.shape[-1], images.shape[-2]], device=self.device)

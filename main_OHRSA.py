@@ -63,7 +63,7 @@ output_folder = args.output_file.rpartition(os.sep)[0]
 if not os.path.exists(output_folder):
     os.makedirs(output_folder)
 
-'''
+# '''
 if not USE_CUDA:
     os.environ["CUDA_VISIBLE_DEVICES"] = "" # DEBUG
 # DEBUG
@@ -79,7 +79,7 @@ args.num_iteration = 30
 args.object = False 
 args.hid_size = 96
 args.photometric = True
-args.bloodiness = True
+args.bloodiness = False
 args.multiframe = False # IMPORTANT: Keep False, it does not support multi-frame now
 args.log_batch = 1 # frequency to print training losses
 args.val_epoch = 1 # frequency to compute validation loss
@@ -91,7 +91,7 @@ args.lr_step = 100
 args.lr_step_gamma = 0.9
 # args.visualize = True
 # args.output_results = '/content/drive/MyDrive/Thesis/THOR-Net_trained_on_POV-Surgery_object_False/Training-100samples--20-06-2024_17-08/output_results'
-'''
+# '''
 
 # ## DEBUG time
 # from utils.utils_shared import log_time_file_path
